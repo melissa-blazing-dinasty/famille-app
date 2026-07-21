@@ -198,7 +198,11 @@ export default function App() {
   const [planning, setPlanning, r12] = useFirestoreArray(familyCode, authReady, "planning", []);
   const [todos, setTodos, r13] = useFirestoreArray(familyCode, authReady, "todos", []);
   const [parentPin, setParentPin, r14] = useFirestoreArray(familyCode, authReady, "parentPin", "");
-  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14;
+  const [budgetQuotidien, setBudgetQuotidien, r15] = useFirestoreArray(familyCode, authReady, "budgetQuotidien", []);
+  const [decouvert, setDecouvert, r16] = useFirestoreArray(familyCode, authReady, "decouvert", { debutMois: 0, rembourseCeMois: 0 });
+  const [extrasImprevus, setExtrasImprevus, r17] = useFirestoreArray(familyCode, authReady, "extrasImprevus", []);
+  const [courses, setCourses, r18] = useFirestoreArray(familyCode, authReady, "courses", []);
+  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17 && r18;
 
   useNotifierDuJour(taches, planning);
 
@@ -255,6 +259,10 @@ export default function App() {
               transactions={transactions} setTransactions={setTransactions}
               categories={categories} setCategories={setCategories}
               baseMensuelle={baseMensuelle} setBaseMensuelle={setBaseMensuelle}
+              budgetQuotidien={budgetQuotidien} setBudgetQuotidien={setBudgetQuotidien}
+              decouvert={decouvert} setDecouvert={setDecouvert}
+              extrasImprevus={extrasImprevus} setExtrasImprevus={setExtrasImprevus}
+              courses={courses} setCourses={setCourses}
               accent={ACCENTS.budget}
             />
           ) : tab === "menus" ? (
@@ -404,12 +412,17 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
 /* ------------------------------------------------------------------ */
 /* BUDGET                                                               */
 /* ------------------------------------------------------------------ */
-function BudgetTab({ comptes, setComptes, transactions, setTransactions, categories, setCategories, baseMensuelle, setBaseMensuelle, accent }) {
+function BudgetTab({ comptes, setComptes, transactions, setTransactions, categories, setCategories, baseMensuelle, setBaseMensuelle, budgetQuotidien, setBudgetQuotidien, decouvert, setDecouvert, extrasImprevus, setExtrasImprevus, courses, setCourses, accent }) {
   const [newCompte, setNewCompte] = useState("");
   const [newSolde, setNewSolde] = useState("0");
   const [form, setForm] = useState({ date: todayISO(), compte: "", categorie: categories[0] || "", type: "depense", montant: "", description: "" });
   const [newCat, setNewCat] = useState("");
   const [monthFilter, setMonthFilter] = useState(todayISO().slice(0, 7));
+
+  // --- Suivi avancé (basé sur le fichier Excel d'origine) ---
+  const [quotForm, setQuotForm] = useState({ categorie: "", prevu: "" });
+  const [courseForm, setCourseForm] = useState({ achat: "", montant: "" });
+  const [extraForm, setExtraForm] = useState({ poste: "", montant: "", type: "extra" });
 
   useEffect(() => {
     if (!form.compte && comptes.length) setForm((f) => ({ ...f, compte: comptes[0].nom }));
@@ -454,6 +467,48 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }, [monthTx]);
   const maxCat = Math.max(1, ...parCategorie.map(([, v]) => v));
+
+  // --- Le Quotidien : budget prévu par catégorie ---
+  const addQuot = () => {
+    if (!quotForm.categorie.trim() || !quotForm.prevu) return;
+    setBudgetQuotidien([...budgetQuotidien, { id: uid(), categorie: quotForm.categorie.trim(), prevu: Number(quotForm.prevu) || 0 }]);
+    setQuotForm({ categorie: "", prevu: "" });
+  };
+  const removeQuot = (id) => setBudgetQuotidien(budgetQuotidien.filter((q) => q.id !== id));
+  const reelParCategorieMap = Object.fromEntries(parCategorie);
+  const totalQuotidienPrevu = budgetQuotidien.reduce((s, q) => s + q.prevu, 0);
+  const totalQuotidienReel = budgetQuotidien.reduce((s, q) => s + (reelParCategorieMap[q.categorie] || 0), 0);
+
+  // --- Suivi du découvert ---
+  const decouvertRestant = Math.max(0, (decouvert.debutMois || 0) - (decouvert.rembourseCeMois || 0));
+
+  // --- Suivi courses (cumul) ---
+  const addCourse = () => {
+    if (!courseForm.achat.trim() || !courseForm.montant) return;
+    setCourses([{ id: uid(), achat: courseForm.achat.trim(), montant: Number(courseForm.montant) || 0, date: todayISO() }, ...courses]);
+    setCourseForm({ achat: "", montant: "" });
+  };
+  const removeCourse = (id) => setCourses(courses.filter((c) => c.id !== id));
+  const totalCourses = courses.reduce((s, c) => s + c.montant, 0);
+  const budgetAlimentation = budgetQuotidien.find((q) => q.categorie.toLowerCase().includes("aliment"))?.prevu || 0;
+  const resteDisponibleCourses = budgetAlimentation - totalCourses;
+
+  // --- Extras & imprévus hors budget ---
+  const addExtra = () => {
+    if (!extraForm.poste.trim() || !extraForm.montant) return;
+    setExtrasImprevus([{ id: uid(), poste: extraForm.poste.trim(), montant: Number(extraForm.montant) || 0, type: extraForm.type, date: todayISO() }, ...extrasImprevus]);
+    setExtraForm({ poste: "", montant: "", type: "extra" });
+  };
+  const removeExtra = (id) => setExtrasImprevus(extrasImprevus.filter((e) => e.id !== id));
+  const totalExtras = extrasImprevus.filter((e) => e.type === "extra").reduce((s, e) => s + e.montant, 0);
+  const totalImprevus = extrasImprevus.filter((e) => e.type === "imprevu").reduce((s, e) => s + e.montant, 0);
+
+  // --- Vue d'ensemble (mêmes formules que le fichier Excel d'origine) ---
+  const totalRentrees = baseMensuelle.filter((l) => l.type === "revenu").reduce((s, l) => s + l.montant, 0);
+  const totalDepensesFixes = baseMensuelle.filter((l) => l.type === "depense").reduce((s, l) => s + l.montant, 0);
+  const resteTheorique = totalRentrees - totalDepensesFixes - totalQuotidienPrevu;
+  const resteReelApresDecouvert = resteTheorique - (decouvert.rembourseCeMois || 0);
+  const resteDisponibleGlobal = resteReelApresDecouvert - totalExtras - totalImprevus;
 
   const handleCSV = (e) => {
     const file = e.target.files[0];
@@ -618,6 +673,123 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
               </div>
             ))}
             {!transactions.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucune transaction pour le moment.</p>}
+          </div>
+        </Card>
+      </div>
+
+      {/* Vue d'ensemble */}
+      <div className="rounded-lg p-5" style={{ background: accent.soft }}>
+        <p className="text-xs uppercase tracking-wide font-semibold mb-2" style={{ color: accent.deep }}>Vue d'ensemble du mois</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+          <div><p style={{ color: INK_SOFT }}>Rentrées</p><p className="font-serif font-bold text-lg">{formatEUR(totalRentrees)}</p></div>
+          <div><p style={{ color: INK_SOFT }}>Dépenses fixes</p><p className="font-serif font-bold text-lg">{formatEUR(totalDepensesFixes)}</p></div>
+          <div><p style={{ color: INK_SOFT }}>Quotidien prévu</p><p className="font-serif font-bold text-lg">{formatEUR(totalQuotidienPrevu)}</p></div>
+          <div><p style={{ color: INK_SOFT }}>Reste disponible réel</p><p className="font-serif font-bold text-lg" style={{ color: resteDisponibleGlobal < 0 ? "#A33B3B" : accent.deep }}>{formatEUR(resteDisponibleGlobal)}</p></div>
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Le Quotidien : budget prévu vs réel */}
+        <Card>
+          <SectionTitle accent={accent}>Le Quotidien — prévu vs réel</SectionTitle>
+          <div className="flex flex-col gap-2 mb-3">
+            {budgetQuotidien.map((q) => {
+              const reel = reelParCategorieMap[q.categorie] || 0;
+              const reste = q.prevu - reel;
+              return (
+                <div key={q.id} className="text-sm">
+                  <div className="flex justify-between items-center mb-0.5">
+                    <span className="font-medium">{q.categorie}</span>
+                    <div className="flex items-center gap-2">
+                      <span style={{ color: INK_SOFT }}>{formatEUR(reel)} / {formatEUR(q.prevu)}</span>
+                      <button onClick={() => removeQuot(q.id)} className="opacity-40 hover:opacity-100"><Trash2 size={13} /></button>
+                    </div>
+                  </div>
+                  <div className="h-2 rounded-full bg-black/5"><div className="h-2 rounded-full" style={{ width: `${Math.min(100, (reel / (q.prevu || 1)) * 100)}%`, background: reste < 0 ? "#A33B3B" : accent.main }} /></div>
+                  <p className="text-xs mt-0.5" style={{ color: reste < 0 ? "#A33B3B" : INK_SOFT }}>reste {formatEUR(reste)}</p>
+                </div>
+              );
+            })}
+            {!budgetQuotidien.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucune catégorie budgétée pour l'instant.</p>}
+          </div>
+          <div className="flex flex-wrap gap-2 items-end pt-2 border-t" style={{ borderColor: LINE }}>
+            <Field label="Catégorie">
+              <input className={inputCls} style={{ borderColor: LINE }} value={quotForm.categorie} onChange={(e) => setQuotForm({ ...quotForm, categorie: e.target.value })} placeholder="Alimentation" />
+            </Field>
+            <Field label="Prévu (€)">
+              <input type="number" className={inputCls + " w-24"} style={{ borderColor: LINE }} value={quotForm.prevu} onChange={(e) => setQuotForm({ ...quotForm, prevu: e.target.value })} />
+            </Field>
+            <button onClick={addQuot} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter</button>
+          </div>
+        </Card>
+
+        {/* Suivi du découvert */}
+        <Card>
+          <SectionTitle accent={accent}>Suivi du découvert</SectionTitle>
+          <div className="flex flex-wrap gap-3 mb-3">
+            <Field label="Découvert en début de mois">
+              <input type="number" className={inputCls + " w-32"} style={{ borderColor: LINE }} value={decouvert.debutMois || ""} onChange={(e) => setDecouvert({ ...decouvert, debutMois: Number(e.target.value) || 0 })} />
+            </Field>
+            <Field label="Remboursé ce mois-ci">
+              <input type="number" className={inputCls + " w-32"} style={{ borderColor: LINE }} value={decouvert.rembourseCeMois || ""} onChange={(e) => setDecouvert({ ...decouvert, rembourseCeMois: Number(e.target.value) || 0 })} />
+            </Field>
+          </div>
+          <p className="text-sm">Découvert restant : <strong style={{ color: decouvertRestant > 0 ? "#A33B3B" : accent.deep }}>{formatEUR(decouvertRestant)}</strong></p>
+        </Card>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Suivi courses */}
+        <Card>
+          <SectionTitle accent={accent}>Suivi courses (cumul)</SectionTitle>
+          <p className="text-sm mb-2">Total : <strong>{formatEUR(totalCourses)}</strong>{budgetAlimentation > 0 && <> · reste disponible <strong style={{ color: resteDisponibleCourses < 0 ? "#A33B3B" : accent.deep }}>{formatEUR(resteDisponibleCourses)}</strong></>}</p>
+          <div className="flex flex-col gap-1.5 mb-3 max-h-48 overflow-auto pr-1">
+            {courses.map((c) => (
+              <div key={c.id} className="flex items-center justify-between text-sm py-1 border-b" style={{ borderColor: LINE }}>
+                <span>{c.achat}</span>
+                <div className="flex items-center gap-2"><span className="font-semibold">{formatEUR(c.montant)}</span><button onClick={() => removeCourse(c.id)} className="opacity-40 hover:opacity-100"><Trash2 size={13} /></button></div>
+              </div>
+            ))}
+            {!courses.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucun achat enregistré.</p>}
+          </div>
+          <div className="flex flex-wrap gap-2 items-end pt-2 border-t" style={{ borderColor: LINE }}>
+            <Field label="Achat">
+              <input className={inputCls} style={{ borderColor: LINE }} value={courseForm.achat} onChange={(e) => setCourseForm({ ...courseForm, achat: e.target.value })} placeholder="Courses, boucherie..." />
+            </Field>
+            <Field label="Montant (€)">
+              <input type="number" className={inputCls + " w-24"} style={{ borderColor: LINE }} value={courseForm.montant} onChange={(e) => setCourseForm({ ...courseForm, montant: e.target.value })} />
+            </Field>
+            <button onClick={addCourse} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter</button>
+          </div>
+        </Card>
+
+        {/* Extras & imprévus */}
+        <Card>
+          <SectionTitle accent={accent}>Extras &amp; imprévus (hors budget)</SectionTitle>
+          <p className="text-sm mb-2">Extras : <strong>{formatEUR(totalExtras)}</strong> · Imprévus : <strong>{formatEUR(totalImprevus)}</strong></p>
+          <div className="flex flex-col gap-1.5 mb-3 max-h-48 overflow-auto pr-1">
+            {extrasImprevus.map((e) => (
+              <div key={e.id} className="flex items-center justify-between text-sm py-1 border-b" style={{ borderColor: LINE }}>
+                <span>{e.poste} <span className="text-xs px-1.5 py-0.5 rounded-full ml-1" style={{ background: accent.soft, color: accent.deep }}>{e.type === "extra" ? "extra" : "imprévu"}</span></span>
+                <div className="flex items-center gap-2"><span className="font-semibold">{formatEUR(e.montant)}</span><button onClick={() => removeExtra(e.id)} className="opacity-40 hover:opacity-100"><Trash2 size={13} /></button></div>
+              </div>
+            ))}
+            {!extrasImprevus.length && <p className="text-sm" style={{ color: INK_SOFT }}>Rien d'enregistré pour l'instant.</p>}
+          </div>
+          <div className="flex flex-wrap gap-2 items-end pt-2 border-t" style={{ borderColor: LINE }}>
+            <Field label="Poste">
+              <input className={inputCls} style={{ borderColor: LINE }} value={extraForm.poste} onChange={(e) => setExtraForm({ ...extraForm, poste: e.target.value })} placeholder="Resto, tatoo, réparation..." />
+            </Field>
+            <Field label="Type">
+              <select className={inputCls} style={{ borderColor: LINE }} value={extraForm.type} onChange={(e) => setExtraForm({ ...extraForm, type: e.target.value })}>
+                <option value="extra">Extra</option>
+                <option value="imprevu">Imprévu</option>
+              </select>
+            </Field>
+            <Field label="Montant (€)">
+              <input type="number" className={inputCls + " w-24"} style={{ borderColor: LINE }} value={extraForm.montant} onChange={(e) => setExtraForm({ ...extraForm, montant: e.target.value })} />
+            </Field>
+            <button onClick={addExtra} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter</button>
           </div>
         </Card>
       </div>
@@ -980,9 +1152,19 @@ function EpargneTab({ epargnes, setEpargnes, accent }) {
 /* ENFANTS — vue enfant : argent de poche, jauge, bons points, tâches   */
 /* ------------------------------------------------------------------ */
 const TACHES_DE_BASE = [
-  "Ranger sa chambre", "Débarrasser la table", "Mettre la table", "Faire son lit",
-  "Sortir les poubelles", "Vider le lave-vaisselle", "Passer l'aspirateur", "Nourrir l'animal",
+  { titre: "Ranger sa chambre", emoji: "🧸" },
+  { titre: "Débarrasser la table", emoji: "🍽️" },
+  { titre: "Mettre la table", emoji: "🍴" },
+  { titre: "Faire son lit", emoji: "🛏️" },
+  { titre: "Sortir les poubelles", emoji: "🗑️" },
+  { titre: "Vider le lave-vaisselle", emoji: "🧽" },
+  { titre: "Passer l'aspirateur", emoji: "🧹" },
+  { titre: "Nourrir l'animal", emoji: "🐾" },
 ];
+const TACHE_EMOJI_PAR_TITRE = Object.fromEntries(TACHES_DE_BASE.map((t) => [t.titre, t.emoji]));
+function emojiTache(titre) {
+  return TACHE_EMOJI_PAR_TITRE[titre] || "⭐";
+}
 
 function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRecompenses, menus, menuIdees, setMenuIdees, parentPin, setParentPin, accent }) {
   const [selectedId, setSelectedId] = useState(enfants[0]?.id || null);
@@ -1243,20 +1425,27 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
               {tachesEnfant.map((t) => {
                 const enRetard = t.rappelDate && t.rappelDate <= today && t.statut !== "valide";
                 return (
-                  <div key={t.id} className="flex items-center justify-between px-2 py-1.5 rounded-md text-sm flex-wrap gap-y-1"
+                  <div key={t.id} className="flex items-center justify-between px-2 py-2 rounded-md text-sm flex-wrap gap-y-1"
                     style={{ background: t.statut === "valide" ? accent.soft : t.statut === "en_attente" ? "#FCEFD9" : "transparent" }}>
-                    <label className="flex items-center gap-2 cursor-pointer">
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <span className="flex items-center justify-center rounded-full text-xl w-10 h-10 shrink-0" style={{ background: "#fff" }}>
+                        {emojiTache(t.titre)}
+                      </span>
                       {t.statut === "valide" ? (
-                        <CheckCircle2 size={16} style={{ color: accent.deep }} />
+                        <CheckCircle2 size={18} style={{ color: accent.deep }} />
                       ) : (
-                        <input type="checkbox" checked={t.statut === "en_attente"} onChange={() => marquerFait(t)} className="w-4 h-4" />
+                        <input type="checkbox" checked={t.statut === "en_attente"} onChange={() => marquerFait(t)} className="w-5 h-5" />
                       )}
-                      <span style={{ textDecoration: t.statut === "valide" ? "line-through" : "none", color: t.statut === "valide" ? accent.deep : INK }}>{t.titre}</span>
-                      <span className="text-xs" style={{ color: INK_SOFT }}>({t.points} pts)</span>
-                      {t.statut === "en_attente" && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F0C36B", color: "#5C4300" }}>en attente de validation</span>
-                      )}
-                      {enRetard && t.statut === "a_faire" && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F3D6D6", color: "#A33B3B" }}>à faire aujourd'hui</span>}
+                      <span>
+                        <span className="block font-medium" style={{ textDecoration: t.statut === "valide" ? "line-through" : "none", color: t.statut === "valide" ? accent.deep : INK }}>{t.titre}</span>
+                        <span className="text-xs flex items-center gap-1.5 flex-wrap" style={{ color: INK_SOFT }}>
+                          <Star size={12} />{t.points} pts
+                          {t.statut === "en_attente" && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F0C36B", color: "#5C4300" }}>en attente de validation</span>
+                          )}
+                          {enRetard && t.statut === "a_faire" && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F3D6D6", color: "#A33B3B" }}>à faire aujourd'hui</span>}
+                        </span>
+                      </span>
                     </label>
                     <div className="flex items-center gap-2">
                       {modeParent && t.statut === "en_attente" && (
@@ -1276,11 +1465,11 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
               <>
                 <p className="text-xs font-semibold mb-1.5" style={{ color: INK_SOFT }}>Tâches de base (clic pour ajouter, 5 pts) :</p>
                 <div className="flex flex-wrap gap-1.5 mb-3">
-                  {TACHES_DE_BASE.map((titre) => (
+                  {TACHES_DE_BASE.map(({ titre, emoji }) => (
                     <button key={titre} onClick={() => addTache(titre, 5)}
-                      className="text-xs px-2.5 py-1 rounded-full font-semibold border"
+                      className="text-xs px-2.5 py-1 rounded-full font-semibold border flex items-center gap-1"
                       style={{ borderColor: LINE, color: accent.deep, background: accent.soft }}>
-                      + {titre}
+                      <span className="text-sm">{emoji}</span> {titre}
                     </button>
                   ))}
                 </div>
