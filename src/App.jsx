@@ -1260,7 +1260,7 @@ function MenusTab({ menus, setMenus, recettes, setRecettes, accent, menuIdees, s
     const nomPropre = nom.trim();
     setRecettes((prev) => {
       const dejaLa = prev.some((r) => r.type === type && r.nom.trim().toLowerCase() === nomPropre.toLowerCase());
-      return dejaLa ? prev : [{ id: uid(), nom: nomPropre, type, lien: "", texte: "", date: todayISO() }, ...prev];
+      return dejaLa ? prev : [{ id: uid(), nom: nomPropre, type, lien: "", texte: "", ingredients: "", date: todayISO() }, ...prev];
     });
   };
 
@@ -1275,10 +1275,38 @@ function MenusTab({ menus, setMenus, recettes, setRecettes, accent, menuIdees, s
     return map;
   }, [menus]);
 
+  // --- Liste de courses générée depuis les menus prévus sur la période affichée ---
+  const [coches, setCoches] = useState({});
+  const [extraCourse, setExtraCourse] = useState("");
+  const [extrasCourses, setExtrasCourses] = useState([]);
+
+  const listeCourses = useMemo(() => {
+    const map = {};
+    jours.forEach((date) => {
+      menus.filter((m) => m.date === date).forEach((m) => {
+        const recette = recettes.find((r) => r.nom.trim().toLowerCase() === m.nom.trim().toLowerCase() && r.type === m.type);
+        if (recette && recette.ingredients) {
+          recette.ingredients.split("\n").map((s) => s.trim()).filter(Boolean).forEach((ing) => {
+            const key = ing.toLowerCase();
+            if (!map[key]) map[key] = { label: ing, count: 0 };
+            map[key].count += 1;
+          });
+        }
+      });
+    });
+    return Object.values(map).sort((a, b) => a.label.localeCompare(b.label));
+  }, [jours, menus, recettes]);
+
+  const ajouterExtraCourse = () => {
+    if (!extraCourse.trim()) return;
+    setExtrasCourses((prev) => [...prev, extraCourse.trim()]);
+    setExtraCourse("");
+  };
+
   return (
     <div className="flex flex-col gap-6 max-w-5xl">
       <div className="flex flex-wrap gap-2">
-        {["planning", "historique"].map((v) => (
+        {["planning", "historique", "courses"].map((v) => (
           <button key={v} onClick={() => setView(v)}
             className="px-3.5 py-1.5 rounded-full text-sm font-semibold capitalize"
             style={{ background: view === v ? accent.main : accent.soft, color: view === v ? "#fff" : accent.deep }}>
@@ -1316,7 +1344,7 @@ function MenusTab({ menus, setMenus, recettes, setRecettes, accent, menuIdees, s
             ))}
           </div>
         </>
-      ) : (
+      ) : view === "historique" ? (
         <Card>
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <SectionTitle accent={accent}>Menus déjà utilisés</SectionTitle>
@@ -1348,6 +1376,38 @@ function MenusTab({ menus, setMenus, recettes, setRecettes, accent, menuIdees, s
               </div>
             ))}
             {!historique.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucun menu enregistré pour l'instant.</p>}
+          </div>
+        </Card>
+      ) : (
+        <Card>
+          <SectionTitle accent={accent}>Liste de courses (générée du {formatDateFR(jours[0])} au {formatDateFR(jours[jours.length - 1])})</SectionTitle>
+          <p className="text-xs mb-3" style={{ color: INK_SOFT }}>
+            Calculée à partir des ingrédients des recettes assignées à tes menus sur cette période (change la période dans l'onglet "planning"). Pense à renseigner les ingrédients de tes recettes pour que ça remonte ici.
+          </p>
+          <div className="flex flex-col gap-1 mb-3">
+            {listeCourses.map((item) => (
+              <label key={item.label} className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer" style={{ background: coches[item.label] ? accent.soft : "transparent" }}>
+                <input type="checkbox" checked={!!coches[item.label]} onChange={() => setCoches((prev) => ({ ...prev, [item.label]: !prev[item.label] }))} className="w-4 h-4" />
+                <span style={{ textDecoration: coches[item.label] ? "line-through" : "none", color: coches[item.label] ? accent.deep : INK }}>{item.label}</span>
+                {item.count > 1 && <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background: accent.soft, color: accent.deep }}>×{item.count}</span>}
+              </label>
+            ))}
+            {extrasCourses.map((label, i) => (
+              <label key={`extra-${i}`} className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer justify-between" style={{ background: coches[`extra-${i}`] ? accent.soft : "transparent" }}>
+                <span className="flex items-center gap-2">
+                  <input type="checkbox" checked={!!coches[`extra-${i}`]} onChange={() => setCoches((prev) => ({ ...prev, [`extra-${i}`]: !prev[`extra-${i}`] }))} className="w-4 h-4" />
+                  <span style={{ textDecoration: coches[`extra-${i}`] ? "line-through" : "none" }}>{label}</span>
+                </span>
+                <button onClick={() => setExtrasCourses((prev) => prev.filter((_, idx) => idx !== i))} className="opacity-40 hover:opacity-100"><Trash2 size={13} /></button>
+              </label>
+            ))}
+            {!listeCourses.length && !extrasCourses.length && (
+              <p className="text-sm" style={{ color: INK_SOFT }}>Rien pour l'instant — ajoute des ingrédients à tes recettes assignées à cette période, ou ajoute un article manuellement ci-dessous.</p>
+            )}
+          </div>
+          <div className="flex gap-2 pt-2 border-t" style={{ borderColor: LINE }}>
+            <input className={inputCls + " flex-1"} style={{ borderColor: LINE }} value={extraCourse} onChange={(e) => setExtraCourse(e.target.value)} placeholder="Ajouter un article (ex. papier toilette)" onKeyDown={(e) => e.key === "Enter" && ajouterExtraCourse()} />
+            <button onClick={ajouterExtraCourse} className="h-9 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter</button>
           </div>
         </Card>
       )}
@@ -1382,7 +1442,7 @@ function MenusTab({ menus, setMenus, recettes, setRecettes, accent, menuIdees, s
 /* RECETTES                                                             */
 /* ------------------------------------------------------------------ */
 function RecettesTab({ recettes, setRecettes, menus, setMenus, accent }) {
-  const [form, setForm] = useState({ nom: "", type: TYPES_PLAT[1], lien: "", texte: "" });
+  const [form, setForm] = useState({ nom: "", type: TYPES_PLAT[1], lien: "", texte: "", ingredients: "" });
   const [search, setSearch] = useState("");
   const [filtreType, setFiltreType] = useState("Tous");
   const [openId, setOpenId] = useState(null);
@@ -1398,7 +1458,7 @@ function RecettesTab({ recettes, setRecettes, menus, setMenus, accent }) {
   const addRecette = () => {
     if (!form.nom.trim()) return;
     setRecettes([{ id: uid(), ...form, date: todayISO() }, ...recettes]);
-    setForm({ nom: "", type: TYPES_PLAT[1], lien: "", texte: "" });
+    setForm({ nom: "", type: TYPES_PLAT[1], lien: "", texte: "", ingredients: "" });
   };
   const removeRecette = (id) => setRecettes((prev) => prev.filter((r) => r.id !== id));
 
@@ -1438,6 +1498,10 @@ function RecettesTab({ recettes, setRecettes, menus, setMenus, accent }) {
         </div>
         <Field label="Lien (TikTok / Instagram / autre)">
           <input className={inputCls} style={{ borderColor: LINE }} value={form.lien} onChange={(e) => setForm({ ...form, lien: e.target.value })} placeholder="https://..." />
+        </Field>
+        <div className="h-2.5" />
+        <Field label="Ingrédients (un par ligne — sert à générer la liste de courses)">
+          <textarea className={inputCls + " min-h-[70px]"} style={{ borderColor: LINE }} value={form.ingredients} onChange={(e) => setForm({ ...form, ingredients: e.target.value })} placeholder={"Farine\n2 œufs\nSucre..."} />
         </Field>
         <div className="h-2.5" />
         <Field label="Recette (ingrédients, étapes...)">
@@ -1487,12 +1551,21 @@ function RecettesTab({ recettes, setRecettes, menus, setMenus, accent }) {
                   <LinkIcon size={12} /> Voir la vidéo d'origine
                 </a>
               )}
-              {r.texte && (
-                <button onClick={() => setOpenId(openId === r.id ? null : r.id)} className="text-xs mt-1.5 font-semibold" style={{ color: accent.deep }}>
-                  {openId === r.id ? "Masquer la recette" : "Voir la recette"}
-                </button>
+              <button onClick={() => setOpenId(openId === r.id ? null : r.id)} className="text-xs mt-1.5 font-semibold" style={{ color: accent.deep }}>
+                {openId === r.id ? "Masquer" : "Voir / ajouter les ingrédients"}
+              </button>
+              {openId === r.id && (
+                <div className="mt-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: INK_SOFT }}>Ingrédients</p>
+                  <textarea
+                    defaultValue={r.ingredients || ""}
+                    onBlur={(e) => setRecettes((prev) => prev.map((x) => (x.id === r.id ? { ...x, ingredients: e.target.value } : x)))}
+                    placeholder={"Un ingrédient par ligne (pour la liste de courses)"}
+                    className={inputCls + " w-full min-h-[60px] mb-2"} style={{ borderColor: LINE }}
+                  />
+                  {r.texte && <p className="text-sm whitespace-pre-wrap" style={{ color: INK }}>{r.texte}</p>}
+                </div>
               )}
-              {openId === r.id && <p className="text-sm mt-2 whitespace-pre-wrap" style={{ color: INK }}>{r.texte}</p>}
 
               <button
                 onClick={() => setAssignId(assignId === r.id ? null : r.id)}
