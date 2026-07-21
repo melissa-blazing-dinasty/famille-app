@@ -2,11 +2,12 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Wallet, CalendarDays, BookOpen, Plus, Trash2, X, Search,
   Upload, TrendingUp, TrendingDown, Link as LinkIcon,
-  PiggyBank, Baby, Calendar, ListChecks, Star, Gift, ExternalLink, CheckCircle2, Lightbulb, Bell, Lock, Unlock, Minus, Sun, Moon, Cookie, RefreshCw
+  PiggyBank, Baby, Calendar, ListChecks, Star, Gift, ExternalLink, CheckCircle2, Lightbulb, Bell, Lock, Unlock, Minus, Sun, Moon, Cookie, RefreshCw, Save, ChevronDown
 } from "lucide-react";
 import Papa from "papaparse";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { db, ensureSignedIn } from "./firebase.js";
-import { doc, onSnapshot, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, serverTimestamp, waitForPendingWrites } from "firebase/firestore";
 
 /* ------------------------------------------------------------------ */
 /* Tokens                                                              */
@@ -59,11 +60,26 @@ function formatDateFR(iso) {
 function keyDocRef(familyCode, key) {
   return doc(db, "familles", familyCode, "store", key);
 }
+// Firestore refuse tout champ "undefined" — il rejette l'écriture ENTIÈRE
+// sans que ça se voie dans l'appli si on ne fait pas attention. On nettoie
+// donc toujours nos données (undefined -> null) avant d'écrire.
+function nettoyerPourFirestore(value) {
+  if (value === undefined) return null;
+  if (Array.isArray(value)) return value.map(nettoyerPourFirestore);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const k of Object.keys(value)) out[k] = nettoyerPourFirestore(value[k]);
+    return out;
+  }
+  return value;
+}
 async function saveKeyFS(familyCode, key, value) {
   try {
-    await setDoc(keyDocRef(familyCode, key), { value, updatedAt: serverTimestamp() });
+    await setDoc(keyDocRef(familyCode, key), { value: nettoyerPourFirestore(value), updatedAt: serverTimestamp() });
+    return true;
   } catch (e) {
     console.error("Erreur de sauvegarde", key, e);
+    return false;
   }
 }
 
@@ -181,10 +197,10 @@ function FamilyCodeGate({ onValidate }) {
           placeholder="Ex. dupont-maison-2026"
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && code.trim()) onValidate(code.trim()); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && code.trim()) onValidate(code.trim().toLowerCase()); }}
         />
         <button
-          onClick={() => code.trim() && onValidate(code.trim())}
+          onClick={() => code.trim() && onValidate(code.trim().toLowerCase())}
           className="w-full h-10 rounded-md text-sm font-semibold text-white"
           style={{ background: ACCENTS.budget.main }}
         >
@@ -228,6 +244,39 @@ export default function App() {
 
   useNotifierDuJour(taches, planning);
 
+  const [saveStatus, setSaveStatus] = useState("");
+  const enregistrerMaintenant = async () => {
+    setSaveStatus("saving");
+    const entries = [
+      ["comptes", comptes], ["transactions", transactions], ["categories", categories],
+      ["recettes", recettes], ["menus", menus], ["baseMensuelle", baseMensuelle],
+      ["epargnes", epargnes], ["enfants", enfants], ["taches", taches],
+      ["recompenses", recompenses], ["menuIdees", menuIdees], ["planning", planning],
+      ["todos", todos], ["parentPin", parentPin], ["budgetQuotidien", budgetQuotidien],
+      ["decouvert", decouvert], ["extrasImprevus", extrasImprevus], ["courses", courses],
+    ];
+    const results = await Promise.all(entries.map(([k, v]) => saveKeyFS(familyCode, k, v)));
+    if (!results.every(Boolean)) {
+      setSaveStatus("error");
+      setTimeout(() => setSaveStatus(""), 4000);
+      return;
+    }
+    // Une écriture Firestore peut sembler réussir instantanément alors
+    // qu'elle est juste mise en file d'attente localement (hors-ligne,
+    // réseau capricieux...). On attend une VRAIE confirmation du serveur,
+    // avec une limite de temps pour ne pas bloquer indéfiniment.
+    try {
+      await Promise.race([
+        waitForPendingWrites(db),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 8000)),
+      ]);
+      setSaveStatus("ok");
+    } catch (e) {
+      setSaveStatus("offline");
+    }
+    setTimeout(() => setSaveStatus(""), 4500);
+  };
+
   if (!familyCode) {
     return <FamilyCodeGate onValidate={(code) => { localStorage.setItem("familyCode", code); setFamilyCode(code); }} />;
   }
@@ -270,18 +319,37 @@ export default function App() {
       <main className="flex-1 min-w-0">
         <header className="px-5 sm:px-8 py-5 border-b flex items-start justify-between gap-3" style={{ borderColor: LINE, background: PAPER_DARK }}>
           <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] font-semibold" style={{ color: active.accent.main }}>Carnet de famille</p>
+            <p className="text-[11px] uppercase tracking-[0.2em] font-semibold" style={{ color: active.accent.main }}>
+              Carnet de famille · <span className="normal-case tracking-normal font-mono" style={{ color: INK_SOFT }}>code : {familyCode}</span>
+            </p>
             <h1 className="text-2xl sm:text-3xl font-serif font-semibold mt-0.5" style={{ color: INK }}>{active.label}</h1>
           </div>
-          <button
-            onClick={forcerMiseAJour}
-            title="Force le rechargement de la dernière version de l'appli"
-            className="shrink-0 flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-md border mt-1"
-            style={{ borderColor: LINE, color: INK_SOFT }}
-          >
-            <RefreshCw size={13} />
-            <span className="hidden sm:inline">Mettre à jour</span>
-          </button>
+          <div className="flex items-center gap-2 mt-1">
+            <button
+              onClick={enregistrerMaintenant}
+              title="Force l'enregistrement immédiat de toutes les données, avec confirmation du serveur"
+              className="shrink-0 flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-md border"
+              style={{
+                borderColor: saveStatus === "error" || saveStatus === "offline" ? "#A33B3B" : LINE,
+                color: saveStatus === "ok" ? active.accent.deep : (saveStatus === "error" || saveStatus === "offline") ? "#A33B3B" : INK_SOFT,
+                background: saveStatus === "ok" ? active.accent.soft : "transparent",
+              }}
+            >
+              <Save size={13} />
+              <span className="hidden sm:inline">
+                {saveStatus === "saving" ? "Enregistrement…" : saveStatus === "ok" ? "Enregistré ✓ (confirmé serveur)" : saveStatus === "offline" ? "Pas de connexion !" : saveStatus === "error" ? "Erreur, réessaie" : "Enregistrer"}
+              </span>
+            </button>
+            <button
+              onClick={forcerMiseAJour}
+              title="Force le rechargement de la dernière version de l'appli"
+              className="shrink-0 flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-md border"
+              style={{ borderColor: LINE, color: INK_SOFT }}
+            >
+              <RefreshCw size={13} />
+              <span className="hidden sm:inline">Mettre à jour</span>
+            </button>
+          </div>
         </header>
         <div className="px-5 sm:px-8 py-6">
           {!loaded ? (
@@ -370,6 +438,7 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
   const removeLigne = (id) => setBaseMensuelle((prev) => prev.filter((l) => l.id !== id));
   const toggleLigne = (id) => setBaseMensuelle((prev) => prev.map((l) => (l.id === id ? { ...l, fait: !l.fait } : l)));
   const setDateLigne = (id, date) => setBaseMensuelle((prev) => prev.map((l) => (l.id === id ? { ...l, date } : l)));
+  const setMontantLigne = (id, montant) => setBaseMensuelle((prev) => prev.map((l) => (l.id === id ? { ...l, montant: Number(montant) || 0 } : l)));
   const resetTout = () => setBaseMensuelle((prev) => prev.map((l) => ({ ...l, fait: false })));
 
   const totalDepenses = baseMensuelle.filter((l) => l.type === "depense").reduce((s, l) => s + l.montant, 0);
@@ -379,10 +448,25 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
   const totalDepensesPrelevees = baseMensuelle.filter((l) => l.type === "depense" && l.fait).reduce((s, l) => s + l.montant, 0);
   const today = todayISO();
 
+  const [ouvert, setOuvert] = useState(false);
+
   return (
     <Card>
-      <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
-        <SectionTitle accent={accent}>Base mensuelle — charges fixes &amp; salaires</SectionTitle>
+      <button onClick={() => setOuvert(!ouvert)} className="flex items-center justify-between w-full mb-1 flex-wrap gap-2 text-left">
+        <span className="flex items-center gap-2">
+          <SectionTitle accent={accent}>Base mensuelle — charges fixes &amp; salaires</SectionTitle>
+          <span className="text-xs" style={{ color: INK_SOFT }}>({baseMensuelle.length} lignes · {ouvert ? "cliquer pour replier" : "cliquer pour ouvrir"})</span>
+        </span>
+        <ChevronDown size={18} style={{ color: INK_SOFT, transform: ouvert ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+      </button>
+      {!ouvert ? (
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm" style={{ color: INK_SOFT }}>
+          <span>Revenus fixes : <strong style={{ color: INK }}>{formatEUR(totalRevenus)}</strong></span>
+          <span>Charges fixes : <strong style={{ color: INK }}>{formatEUR(totalDepenses)}</strong></span>
+        </div>
+      ) : (
+      <>
+      <div className="flex justify-end mb-1">
         <button onClick={resetTout} className="text-xs px-2.5 py-1 rounded-md border font-semibold" style={{ borderColor: LINE, color: INK_SOFT }}>
           Réinitialiser les cases (nouveau mois)
         </button>
@@ -415,9 +499,15 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
               <span className="text-xs" style={{ color: l.fait ? CHECKED_BLUE_TEXT : INK_SOFT }}>{l.compte || "—"}</span>
               <input type="date" value={l.date || ""} onChange={(e) => setDateLigne(l.id, e.target.value)}
                 className="text-xs border rounded px-1 py-0.5" style={{ borderColor: LINE, background: l.fait ? "#fff" : "transparent" }} />
-              <span className="text-right font-semibold flex items-center gap-1 justify-end" style={{ color: l.fait ? CHECKED_BLUE_TEXT : (l.type === "revenu" ? accent.deep : "#A33B3B") }}>
+              <span className="flex items-center gap-1 justify-end" style={{ color: l.fait ? CHECKED_BLUE_TEXT : (l.type === "revenu" ? accent.deep : "#A33B3B") }}>
                 {l.type === "revenu" ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
-                {formatEUR(l.montant)}
+                <input
+                  type="number" step="0.01"
+                  defaultValue={l.montant}
+                  onBlur={(e) => setMontantLigne(l.id, e.target.value)}
+                  className="w-20 text-right font-semibold border rounded px-1 py-0.5 bg-white"
+                  style={{ borderColor: LINE, color: "inherit" }}
+                />
               </span>
               <button onClick={() => removeLigne(l.id)} className="opacity-40 hover:opacity-100 justify-self-end"><Trash2 size={14} /></button>
             </div>
@@ -457,6 +547,8 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
         <span>Reste théorique (fin de mois) : <strong>{formatEUR(totalRevenus - totalDepenses)}</strong></span>
         <span>Reçu/prélevé à ce jour : <strong style={{ color: accent.deep }}>{formatEUR(totalRevenusEncaisses - totalDepensesPrelevees)}</strong></span>
       </div>
+      </>
+      )}
     </Card>
   );
 }
@@ -464,7 +556,106 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
 /* ------------------------------------------------------------------ */
 /* BUDGET                                                               */
 /* ------------------------------------------------------------------ */
+const COULEURS_CAMEMBERT = ["#5F7A5A", "#C17A3B", "#8A4A66", "#4C5B8C", "#C99A2E", "#A33B3B", "#3E7C74"];
+
+function BudgetChartsCard({ totalDepensesFixes, totalQuotidienPrevu, totalCourses, totalExtras, totalImprevus, totalRentrees, epargnes, accent }) {
+  const depensesData = [
+    { name: "Dépenses fixes", value: totalDepensesFixes },
+    { name: "Quotidien (prévu)", value: totalQuotidienPrevu },
+    { name: "Courses", value: totalCourses },
+    { name: "Extras & imprévus", value: totalExtras + totalImprevus },
+  ].filter((d) => d.value > 0);
+  const totalDepensesToutes = depensesData.reduce((s, d) => s + d.value, 0);
+
+  const epargneData = epargnes.filter((e) => e.montant > 0).map((e) => ({ name: e.theme, value: e.montant }));
+  const totalEpargneToutes = epargneData.reduce((s, d) => s + d.value, 0);
+
+  const revenusDepensesData = [
+    { name: "Rentrées", montant: totalRentrees },
+    { name: "Dépenses", montant: totalDepensesToutes },
+  ];
+
+  const renderLabel = ({ percent }) => `${Math.round(percent * 100)}%`;
+
+  return (
+    <div className="grid md:grid-cols-3 gap-6">
+      <Card>
+        <SectionTitle accent={accent}>Répartition des dépenses</SectionTitle>
+        {depensesData.length ? (
+          <>
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={depensesData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={renderLabel}>
+                  {depensesData.map((_, i) => <Cell key={i} fill={COULEURS_CAMEMBERT[i % COULEURS_CAMEMBERT.length]} />)}
+                </Pie>
+                <Tooltip formatter={(v) => formatEUR(v)} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="flex flex-col gap-1 mt-2 text-xs">
+              {depensesData.map((d, i) => (
+                <div key={d.name} className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: COULEURS_CAMEMBERT[i % COULEURS_CAMEMBERT.length] }} />{d.name}</span>
+                  <span className="font-semibold">{formatEUR(d.value)}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="text-sm" style={{ color: INK_SOFT }}>Pas encore assez de données ce mois-ci.</p>
+        )}
+      </Card>
+
+      <Card>
+        <SectionTitle accent={accent}>Répartition de l'épargne</SectionTitle>
+        {epargneData.length ? (
+          <>
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={epargneData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={renderLabel}>
+                  {epargneData.map((_, i) => <Cell key={i} fill={COULEURS_CAMEMBERT[(i + 2) % COULEURS_CAMEMBERT.length]} />)}
+                </Pie>
+                <Tooltip formatter={(v) => formatEUR(v)} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="flex flex-col gap-1 mt-2 text-xs">
+              {epargneData.map((d, i) => (
+                <div key={d.name} className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: COULEURS_CAMEMBERT[(i + 2) % COULEURS_CAMEMBERT.length] }} />{d.name}</span>
+                  <span className="font-semibold">{formatEUR(d.value)}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="text-sm" style={{ color: INK_SOFT }}>Aucune épargne enregistrée pour l'instant.</p>
+        )}
+      </Card>
+
+      <Card>
+        <SectionTitle accent={accent}>Rentrées vs dépenses</SectionTitle>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={revenusDepensesData}>
+            <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip formatter={(v) => formatEUR(v)} />
+            <Bar dataKey="montant" radius={[6, 6, 0, 0]}>
+              {revenusDepensesData.map((d, i) => <Cell key={i} fill={i === 0 ? accent.main : "#A33B3B"} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+        <p className="text-xs mt-2 text-center" style={{ color: totalRentrees - totalDepensesToutes < 0 ? "#A33B3B" : accent.deep }}>
+          {totalRentrees - totalDepensesToutes >= 0 ? "Excédent" : "Déficit"} : <strong>{formatEUR(Math.abs(totalRentrees - totalDepensesToutes))}</strong>
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* BUDGET                                                               */
+/* ------------------------------------------------------------------ */
 function BudgetTab({ comptes, setComptes, transactions, setTransactions, categories, setCategories, baseMensuelle, setBaseMensuelle, budgetQuotidien, setBudgetQuotidien, decouvert, setDecouvert, extrasImprevus, setExtrasImprevus, courses, setCourses, epargnes, setEpargnes, accent }) {
+
   const [newCompte, setNewCompte] = useState("");
   const [newSolde, setNewSolde] = useState("0");
   const [form, setForm] = useState({ date: todayISO(), compte: "", categorie: categories[0] || "", type: "depense", montant: "", description: "" });
@@ -593,6 +784,7 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
     setQuotForm({ categorie: "", prevu: "" });
   };
   const removeQuot = (id) => setBudgetQuotidien((prev) => prev.filter((q) => q.id !== id));
+  const setPrevuQuot = (id, prevu) => setBudgetQuotidien((prev) => prev.map((q) => (q.id === id ? { ...q, prevu: Number(prevu) || 0 } : q)));
   const reelParCategorieMapBrute = Object.fromEntries(parCategorie);
   // Les courses saisies dans "Suivi courses" comptent comme du réel pour la catégorie Alimentation
   const totalCoursesAnticipe = courses.reduce((s, c) => s + c.montant, 0);
@@ -700,9 +892,30 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
         </div>
       </div>
 
-      <BaseMensuelleCard
-        baseMensuelle={baseMensuelle} setBaseMensuelle={setBaseMensuelle}
-        comptes={comptes} accent={accent}
+      {/* Vue d'ensemble */}
+      <div className="rounded-lg p-5" style={{ background: accent.soft }}>
+        <p className="text-xs uppercase tracking-wide font-semibold mb-2" style={{ color: accent.deep }}>Vue d'ensemble du mois</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+          <div><p style={{ color: INK_SOFT }}>Rentrées</p><p className="font-serif font-bold text-lg">{formatEUR(totalRentrees)}</p></div>
+          <div><p style={{ color: INK_SOFT }}>Dépenses fixes</p><p className="font-serif font-bold text-lg">{formatEUR(totalDepensesFixes)}</p></div>
+          <div><p style={{ color: INK_SOFT }}>Quotidien prévu</p><p className="font-serif font-bold text-lg">{formatEUR(totalQuotidienPrevu)}</p></div>
+          <div><p style={{ color: INK_SOFT }}>Reste disponible en fin de mois (théorique)</p><p className="font-serif font-bold text-lg" style={{ color: resteDisponibleGlobal < 0 ? "#A33B3B" : accent.deep }}>{formatEUR(resteDisponibleGlobal)}</p></div>
+        </div>
+        <div className="mt-3 pt-3 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+          <p style={{ color: INK_SOFT }} className="text-sm">Où j'en suis <strong>vraiment</strong> à ce jour (uniquement ce qui est coché comme reçu/prélevé + courses/extras déjà engagés) :</p>
+          <p className="font-serif font-bold text-2xl" style={{ color: soldeReelAJour < 0 ? "#A33B3B" : accent.deep }}>{formatEUR(soldeReelAJour)}</p>
+        </div>
+      </div>
+
+      <BudgetChartsCard
+        totalDepensesFixes={totalDepensesFixes}
+        totalQuotidienPrevu={totalQuotidienPrevu}
+        totalCourses={totalCourses}
+        totalExtras={totalExtras}
+        totalImprevus={totalImprevus}
+        totalRentrees={totalRentrees}
+        epargnes={epargnes}
+        accent={accent}
       />
 
       {/* Comptes */}
@@ -737,6 +950,11 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
           <button onClick={addCompte} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter</button>
         </div>
       </Card>
+
+      <BaseMensuelleCard
+        baseMensuelle={baseMensuelle} setBaseMensuelle={setBaseMensuelle}
+        comptes={comptes} accent={accent}
+      />
 
       {/* Nouvelle transaction */}
       <Card>
@@ -785,10 +1003,13 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
       {/* Répartition + historique */}
       <div className="grid md:grid-cols-2 gap-6">
         <Card>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-1">
             <SectionTitle accent={accent}>Répartition par catégorie</SectionTitle>
             <input type="month" className="text-xs border rounded-md px-2 py-1" style={{ borderColor: LINE }} value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} />
           </div>
+          <p className="text-xs mb-3" style={{ color: INK_SOFT }}>
+            Calculé automatiquement à partir de tes dépenses saisies dans "Nouvelle transaction" ci-dessus (par catégorie). Rien à remplir ici — c'est juste un résumé visuel.
+          </p>
           <div className="flex flex-col gap-2">
             {parCategorie.map(([cat, val]) => (
               <div key={cat}>
@@ -822,22 +1043,6 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
         </Card>
       </div>
 
-      {/* Vue d'ensemble */}
-      <div className="rounded-lg p-5" style={{ background: accent.soft }}>
-        <p className="text-xs uppercase tracking-wide font-semibold mb-2" style={{ color: accent.deep }}>Vue d'ensemble du mois</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-          <div><p style={{ color: INK_SOFT }}>Rentrées</p><p className="font-serif font-bold text-lg">{formatEUR(totalRentrees)}</p></div>
-          <div><p style={{ color: INK_SOFT }}>Dépenses fixes</p><p className="font-serif font-bold text-lg">{formatEUR(totalDepensesFixes)}</p></div>
-          <div><p style={{ color: INK_SOFT }}>Quotidien prévu</p><p className="font-serif font-bold text-lg">{formatEUR(totalQuotidienPrevu)}</p></div>
-          <div><p style={{ color: INK_SOFT }}>Reste disponible en fin de mois (théorique)</p><p className="font-serif font-bold text-lg" style={{ color: resteDisponibleGlobal < 0 ? "#A33B3B" : accent.deep }}>{formatEUR(resteDisponibleGlobal)}</p></div>
-        </div>
-        <div className="mt-3 pt-3 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
-          <p style={{ color: INK_SOFT }} className="text-sm">Où j'en suis <strong>vraiment</strong> à ce jour (uniquement ce qui est coché comme reçu/prélevé + courses/extras déjà engagés) :</p>
-          <p className="font-serif font-bold text-2xl" style={{ color: soldeReelAJour < 0 ? "#A33B3B" : accent.deep }}>{formatEUR(soldeReelAJour)}</p>
-        </div>
-      </div>
-
-
       <div className="grid md:grid-cols-2 gap-6">
         {/* Le Quotidien : budget prévu vs réel */}
         <Card>
@@ -851,7 +1056,16 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
                   <div className="flex justify-between items-center mb-0.5">
                     <span className="font-medium">{q.categorie}</span>
                     <div className="flex items-center gap-2">
-                      <span style={{ color: INK_SOFT }}>{formatEUR(reel)} / {formatEUR(q.prevu)}</span>
+                      <span style={{ color: INK_SOFT }} className="flex items-center gap-1">
+                        {formatEUR(reel)} /
+                        <input
+                          type="number" step="0.01"
+                          defaultValue={q.prevu}
+                          onBlur={(e) => setPrevuQuot(q.id, e.target.value)}
+                          className="w-16 text-right border rounded px-1 py-0.5 bg-white"
+                          style={{ borderColor: LINE }}
+                        /> €
+                      </span>
                       <button onClick={() => removeQuot(q.id)} className="opacity-40 hover:opacity-100"><Trash2 size={13} /></button>
                     </div>
                   </div>
@@ -953,33 +1167,60 @@ const MOMENT_ICONS = { midi: Sun, gouter: Cookie, soir: Moon };
 
 function MomentRow({ label, date, moment, types, getEntry, setEntry, recettes, accent, single }) {
   const Icon = MOMENT_ICONS[moment] || Sun;
+  const dejaSepare = !single && types.some((type) => getEntry(date, moment, type, "enfants") || getEntry(date, moment, type, "parents"));
+  const [separe, setSepare] = useState(dejaSepare);
+
+  const champs = (pub) => (
+    <div className={`grid gap-3 ${single ? "grid-cols-1 max-w-xs" : "grid-cols-1 sm:grid-cols-3"}`}>
+      {types.map((type) => {
+        const entry = getEntry(date, moment, type, pub);
+        const listId = `list-${moment}-${type}-${pub}`;
+        return (
+          <div key={type}>
+            {!single && <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: INK_SOFT }}>{type}</p>}
+            <input
+              list={listId}
+              className="w-full border rounded-md px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2"
+              style={{ borderColor: LINE }}
+              defaultValue={entry ? entry.nom : ""}
+              placeholder="—"
+              onBlur={(e) => setEntry(date, moment, type, e.target.value, pub)}
+            />
+            <datalist id={listId}>
+              {recettes.filter((r) => r.type === type).map((r) => <option key={r.id} value={r.nom} />)}
+            </datalist>
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="rounded-lg p-3.5" style={{ background: accent.soft }}>
-      <p className="text-xs font-bold uppercase tracking-wide mb-2.5 flex items-center gap-1.5" style={{ color: accent.deep }}>
-        <Icon size={15} />{label}
-      </p>
-      <div className={`grid gap-3 ${single ? "grid-cols-1 max-w-xs" : "grid-cols-1 sm:grid-cols-3"}`}>
-        {types.map((type) => {
-          const entry = getEntry(date, moment, type);
-          const listId = `list-${moment}-${type}`;
-          return (
-            <div key={type}>
-              {!single && <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: INK_SOFT }}>{type}</p>}
-              <input
-                list={listId}
-                className="w-full border rounded-md px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2"
-                style={{ borderColor: LINE }}
-                defaultValue={entry ? entry.nom : ""}
-                placeholder="—"
-                onBlur={(e) => setEntry(date, moment, type, e.target.value)}
-              />
-              <datalist id={listId}>
-                {recettes.filter((r) => r.type === type).map((r) => <option key={r.id} value={r.nom} />)}
-              </datalist>
-            </div>
-          );
-        })}
+      <div className="flex items-center justify-between gap-2 mb-2.5 flex-wrap">
+        <p className="text-xs font-bold uppercase tracking-wide flex items-center gap-1.5" style={{ color: accent.deep }}>
+          <Icon size={15} />{label}
+        </p>
+        {!single && (
+          <button onClick={() => setSepare(!separe)} className="text-[10px] font-semibold underline" style={{ color: accent.deep }}>
+            {separe ? "revenir à un seul plat" : "plat différent enfants / parents"}
+          </button>
+        )}
       </div>
+      {separe && !single ? (
+        <div className="flex flex-col gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: INK_SOFT }}>Parents</p>
+            {champs("parents")}
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color: INK_SOFT }}>Enfants</p>
+            {champs("enfants")}
+          </div>
+        </div>
+      ) : (
+        champs("tous")
+      )}
     </div>
   );
 }
@@ -1003,15 +1244,16 @@ function MenusTab({ menus, setMenus, recettes, accent, menuIdees, setMenuIdees, 
     return arr;
   }, [start, duree]);
 
-  const getEntry = (date, moment, type) => menus.find((m) => m.date === date && m.moment === moment && m.type === type);
-  const setEntry = (date, moment, type, nom) => {
-    const existing = getEntry(date, moment, type);
+  const getEntry = (date, moment, type, pub = "tous") =>
+    menus.find((m) => m.date === date && m.moment === moment && m.type === type && (m.public || "tous") === pub);
+  const setEntry = (date, moment, type, nom, pub = "tous") => {
+    const existing = getEntry(date, moment, type, pub);
     if (!nom.trim()) {
       if (existing) setMenus((prev) => prev.filter((m) => m.id !== existing.id));
       return;
     }
     if (existing) setMenus((prev) => prev.map((m) => (m.id === existing.id ? { ...m, nom } : m)));
-    else setMenus((prev) => [...prev, { id: uid(), date, moment, type, nom }]);
+    else setMenus((prev) => [...prev, { id: uid(), date, moment, type, nom, public: pub }]);
   };
 
   const historique = menus
@@ -1085,7 +1327,12 @@ function MenusTab({ menus, setMenus, recettes, accent, menuIdees, setMenuIdees, 
               <div key={m.id} className="flex items-center justify-between text-sm py-1.5 border-b" style={{ borderColor: LINE }}>
                 <div>
                   <p className="font-medium">{m.nom}</p>
-                  <p className="text-xs capitalize" style={{ color: INK_SOFT }}>{MOMENT_LABELS[m.moment] || ""} · {m.type} · {formatDateFR(m.date)}</p>
+                  <p className="text-xs capitalize" style={{ color: INK_SOFT }}>
+                    {MOMENT_LABELS[m.moment] || ""} · {m.type} · {formatDateFR(m.date)}
+                    {m.public && m.public !== "tous" && (
+                      <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: accent.soft, color: accent.deep }}>{m.public}</span>
+                    )}
+                  </p>
                 </div>
                 <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: accent.soft, color: accent.deep }}>
                   utilisé {compteUsage[m.nom] || 1}×
@@ -1252,6 +1499,8 @@ function EpargneTab({ epargnes, setEpargnes, accent }) {
     setEpargnes((prev) => prev.map((e) => (e.id === id ? { ...e, montant: Math.max(0, e.montant + sens * val) } : e)));
     setMontants({ ...montants, [id]: "" });
   };
+  const setMontantDirect = (id, montant) => setEpargnes((prev) => prev.map((e) => (e.id === id ? { ...e, montant: Math.max(0, Number(montant) || 0) } : e)));
+  const setObjectifDirect = (id, objectif) => setEpargnes((prev) => prev.map((e) => (e.id === id ? { ...e, objectif: Number(objectif) || 0 } : e)));
 
   const totalEpargne = epargnes.reduce((s, e) => s + e.montant, 0);
 
@@ -1264,6 +1513,9 @@ function EpargneTab({ epargnes, setEpargnes, accent }) {
 
       <Card>
         <SectionTitle accent={accent}>Nouveau thème d'épargne</SectionTitle>
+        <p className="text-xs mb-3" style={{ color: INK_SOFT }}>
+          C'est ici que tu prévois tes grosses dépenses futures : réparation voiture, vacances, un nouvel appareil... Crée un thème avec un objectif, puis verse dedans au fil du temps pour suivre où tu en es.
+        </p>
         <div className="flex flex-wrap gap-2.5 items-end">
           <Field label="Thème">
             <input className={inputCls} style={{ borderColor: LINE }} value={form.theme} onChange={(e) => setForm({ ...form, theme: e.target.value })} placeholder="Réparation voiture, Vacances..." />
@@ -1287,7 +1539,14 @@ function EpargneTab({ epargnes, setEpargnes, accent }) {
               <div className="h-2.5 rounded-full bg-black/5 mb-1.5">
                 <div className="h-2.5 rounded-full" style={{ width: `${pct}%`, background: accent.main }} />
               </div>
-              <p className="text-sm mb-3" style={{ color: INK_SOFT }}>{formatEUR(e.montant)} / {formatEUR(e.objectif)} ({Math.round(pct)}%)</p>
+              <div className="flex items-center gap-1.5 text-sm mb-3" style={{ color: INK_SOFT }}>
+                <input type="number" step="0.01" defaultValue={e.montant} onBlur={(ev) => setMontantDirect(e.id, ev.target.value)}
+                  className="w-20 border rounded px-1.5 py-0.5 bg-white text-right" style={{ borderColor: LINE }} />
+                <span>/</span>
+                <input type="number" step="0.01" defaultValue={e.objectif} onBlur={(ev) => setObjectifDirect(e.id, ev.target.value)}
+                  className="w-20 border rounded px-1.5 py-0.5 bg-white text-right" style={{ borderColor: LINE }} />
+                <span>€ ({Math.round(pct)}%)</span>
+              </div>
               <div className="flex items-center gap-1.5">
                 <input type="number" placeholder="Montant" className={inputCls + " w-24"} style={{ borderColor: LINE }}
                   value={montants[e.id] || ""} onChange={(ev) => setMontants({ ...montants, [e.id]: ev.target.value })} />

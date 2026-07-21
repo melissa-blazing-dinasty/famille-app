@@ -10,11 +10,17 @@ export const firebaseConfig = {
 };
 
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 
 export const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+// Cache local persistant : les données lues et les écritures en attente
+// survivent à un rechargement de page (F5) ou une coupure réseau
+// temporaire, au lieu d'être perdues si le serveur n'a pas encore
+// confirmé la réception avant le rechargement.
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
 export const auth = getAuth(app);
 
 // Connexion anonyme automatique : pas d'écran de login,
