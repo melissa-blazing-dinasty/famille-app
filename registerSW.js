@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/famille-app/sw.js', { scope: '/famille-app/' })})}
