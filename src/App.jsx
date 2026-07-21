@@ -368,10 +368,10 @@ export default function App() {
               accent={ACCENTS.budget}
             />
           ) : tab === "menus" ? (
-            <MenusTab menus={menus} setMenus={setMenus} recettes={recettes} accent={ACCENTS.menus}
+            <MenusTab menus={menus} setMenus={setMenus} recettes={recettes} setRecettes={setRecettes} accent={ACCENTS.menus}
               menuIdees={menuIdees} setMenuIdees={setMenuIdees} enfants={enfants} />
           ) : tab === "recettes" ? (
-            <RecettesTab recettes={recettes} setRecettes={setRecettes} menus={menus} accent={ACCENTS.recettes} />
+            <RecettesTab recettes={recettes} setRecettes={setRecettes} menus={menus} setMenus={setMenus} accent={ACCENTS.recettes} />
           ) : tab === "epargne" ? (
             <EpargneTab epargnes={epargnes} setEpargnes={setEpargnes} accent={ACCENTS.epargne} />
           ) : tab === "enfants" ? (
@@ -1228,7 +1228,7 @@ function MomentRow({ label, date, moment, types, getEntry, setEntry, recettes, a
 /* ------------------------------------------------------------------ */
 /* MENUS                                                                */
 /* ------------------------------------------------------------------ */
-function MenusTab({ menus, setMenus, recettes, accent, menuIdees, setMenuIdees, enfants }) {
+function MenusTab({ menus, setMenus, recettes, setRecettes, accent, menuIdees, setMenuIdees, enfants }) {
   const [start, setStart] = useState(todayISO());
   const [duree, setDuree] = useState(7);
   const [filtreType, setFiltreType] = useState("Tous");
@@ -1254,6 +1254,14 @@ function MenusTab({ menus, setMenus, recettes, accent, menuIdees, setMenuIdees, 
     }
     if (existing) setMenus((prev) => prev.map((m) => (m.id === existing.id ? { ...m, nom } : m)));
     else setMenus((prev) => [...prev, { id: uid(), date, moment, type, nom, public: pub }]);
+
+    // Un plat tapé directement dans le menu vient enrichir la liste des
+    // recettes/idées, pour pouvoir le repiocher facilement plus tard.
+    const nomPropre = nom.trim();
+    setRecettes((prev) => {
+      const dejaLa = prev.some((r) => r.type === type && r.nom.trim().toLowerCase() === nomPropre.toLowerCase());
+      return dejaLa ? prev : [{ id: uid(), nom: nomPropre, type, lien: "", texte: "", date: todayISO() }, ...prev];
+    });
   };
 
   const historique = menus
@@ -1373,11 +1381,13 @@ function MenusTab({ menus, setMenus, recettes, accent, menuIdees, setMenuIdees, 
 /* ------------------------------------------------------------------ */
 /* RECETTES                                                             */
 /* ------------------------------------------------------------------ */
-function RecettesTab({ recettes, setRecettes, menus, accent }) {
+function RecettesTab({ recettes, setRecettes, menus, setMenus, accent }) {
   const [form, setForm] = useState({ nom: "", type: TYPES_PLAT[1], lien: "", texte: "" });
   const [search, setSearch] = useState("");
   const [filtreType, setFiltreType] = useState("Tous");
   const [openId, setOpenId] = useState(null);
+  const [assignId, setAssignId] = useState(null);
+  const [assignForm, setAssignForm] = useState({ date: todayISO(), moment: "midi", pub: "tous" });
 
   const compteUsage = useMemo(() => {
     const map = {};
@@ -1391,6 +1401,18 @@ function RecettesTab({ recettes, setRecettes, menus, accent }) {
     setForm({ nom: "", type: TYPES_PLAT[1], lien: "", texte: "" });
   };
   const removeRecette = (id) => setRecettes((prev) => prev.filter((r) => r.id !== id));
+
+  const assignerAuMenu = (recette) => {
+    const { date, pub } = assignForm;
+    const type = recette.type;
+    const moment = type === "Goûter" ? "gouter" : assignForm.moment;
+    setMenus((prev) => {
+      const existant = prev.find((m) => m.date === date && m.moment === moment && m.type === type && (m.public || "tous") === pub);
+      if (existant) return prev.map((m) => (m.id === existant.id ? { ...m, nom: recette.nom } : m));
+      return [...prev, { id: uid(), date, moment, type, nom: recette.nom, public: pub }];
+    });
+    setAssignId(null);
+  };
 
   const filtered = recettes.filter((r) =>
     (filtreType === "Tous" || r.type === filtreType) &&
@@ -1471,6 +1493,44 @@ function RecettesTab({ recettes, setRecettes, menus, accent }) {
                 </button>
               )}
               {openId === r.id && <p className="text-sm mt-2 whitespace-pre-wrap" style={{ color: INK }}>{r.texte}</p>}
+
+              <button
+                onClick={() => setAssignId(assignId === r.id ? null : r.id)}
+                className="text-xs mt-2 font-semibold flex items-center gap-1"
+                style={{ color: accent.deep }}
+              >
+                <CalendarDays size={12} />{assignId === r.id ? "Annuler" : "Ajouter à un menu"}
+              </button>
+
+              {assignId === r.id && (
+                <div className="mt-2 pt-2 border-t flex flex-wrap gap-2 items-end" style={{ borderColor: LINE }}>
+                  <Field label="Date">
+                    <input type="date" className={inputCls} style={{ borderColor: LINE }} value={assignForm.date} onChange={(e) => setAssignForm({ ...assignForm, date: e.target.value })} />
+                  </Field>
+                  {r.type !== "Goûter" && (
+                    <Field label="Moment">
+                      <select className={inputCls} style={{ borderColor: LINE }} value={assignForm.moment} onChange={(e) => setAssignForm({ ...assignForm, moment: e.target.value })}>
+                        <option value="midi">Midi</option>
+                        <option value="soir">Soir</option>
+                      </select>
+                    </Field>
+                  )}
+                  <Field label="Pour">
+                    <select className={inputCls} style={{ borderColor: LINE }} value={assignForm.pub} onChange={(e) => setAssignForm({ ...assignForm, pub: e.target.value })}>
+                      <option value="tous">Tout le monde</option>
+                      <option value="parents">Parents</option>
+                      <option value="enfants">Enfants</option>
+                    </select>
+                  </Field>
+                  <button
+                    onClick={() => assignerAuMenu(r)}
+                    className="h-8 px-3 rounded-md text-sm font-semibold text-white"
+                    style={{ background: accent.main }}
+                  >
+                    Ajouter
+                  </button>
+                </div>
+              )}
             </div>
           ))}
           {!filtered.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucune recette pour l'instant.</p>}
