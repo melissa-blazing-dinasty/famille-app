@@ -263,6 +263,7 @@ export default function App() {
               decouvert={decouvert} setDecouvert={setDecouvert}
               extrasImprevus={extrasImprevus} setExtrasImprevus={setExtrasImprevus}
               courses={courses} setCourses={setCourses}
+              epargnes={epargnes} setEpargnes={setEpargnes}
               accent={ACCENTS.budget}
             />
           ) : tab === "menus" ? (
@@ -322,7 +323,7 @@ const CHECKED_BLUE = "#DCEBFA";
 const CHECKED_BLUE_TEXT = "#2C5F8A";
 
 function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent }) {
-  const [form, setForm] = useState({ libelle: "", type: "depense", montant: "", compte: "" });
+  const [form, setForm] = useState({ libelle: "", type: "depense", montant: "", compte: "", date: "" });
 
   useEffect(() => {
     if (!form.compte && comptes.length) setForm((f) => ({ ...f, compte: comptes[0].nom }));
@@ -331,14 +332,19 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
   const addLigne = () => {
     if (!form.libelle.trim() || !form.montant) return;
     setBaseMensuelle([...baseMensuelle, { id: uid(), ...form, montant: Number(form.montant), fait: false }]);
-    setForm({ ...form, libelle: "", montant: "" });
+    setForm({ ...form, libelle: "", montant: "", date: "" });
   };
   const removeLigne = (id) => setBaseMensuelle(baseMensuelle.filter((l) => l.id !== id));
   const toggleLigne = (id) => setBaseMensuelle(baseMensuelle.map((l) => (l.id === id ? { ...l, fait: !l.fait } : l)));
+  const setDateLigne = (id, date) => setBaseMensuelle(baseMensuelle.map((l) => (l.id === id ? { ...l, date } : l)));
   const resetTout = () => setBaseMensuelle(baseMensuelle.map((l) => ({ ...l, fait: false })));
 
   const totalDepenses = baseMensuelle.filter((l) => l.type === "depense").reduce((s, l) => s + l.montant, 0);
   const totalRevenus = baseMensuelle.filter((l) => l.type === "revenu").reduce((s, l) => s + l.montant, 0);
+  // "Réel à ce jour" : seulement ce qui est vraiment coché comme fait
+  const totalRevenusEncaisses = baseMensuelle.filter((l) => l.type === "revenu" && l.fait).reduce((s, l) => s + l.montant, 0);
+  const totalDepensesPrelevees = baseMensuelle.filter((l) => l.type === "depense" && l.fait).reduce((s, l) => s + l.montant, 0);
+  const today = todayISO();
 
   return (
     <Card>
@@ -349,32 +355,41 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
         </button>
       </div>
       <p className="text-xs mb-3" style={{ color: INK_SOFT }}>
-        Ta base récurrente : loyer, crédits, abonnements, salaires... Coche une ligne dès qu'elle est prélevée ou que l'argent est arrivé — la ligne passe en bleu clair.
+        Ta base récurrente : loyer, crédits, abonnements, salaires... Coche une ligne (et note la date si tu veux) dès qu'elle est prélevée ou que l'argent est arrivé — la ligne passe en bleu clair, et ça alimente le "solde réel à ce jour" en bas.
       </p>
 
       <div className="flex flex-col gap-1 mb-3">
         {/* en-tête */}
-        <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-2 text-[11px] font-semibold uppercase tracking-wide px-2" style={{ color: INK_SOFT }}>
+        <div className="grid grid-cols-[auto_1fr_auto_auto_auto_auto] gap-2 text-[11px] font-semibold uppercase tracking-wide px-2" style={{ color: INK_SOFT }}>
           <span className="w-5"></span>
           <span>Libellé</span>
           <span>Compte</span>
+          <span>Date</span>
           <span className="text-right">Montant</span>
           <span></span>
         </div>
-        {baseMensuelle.map((l) => (
-          <div key={l.id}
-            className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-2 items-center px-2 py-2 rounded-md text-sm transition-colors"
-            style={{ background: l.fait ? CHECKED_BLUE : "transparent" }}>
-            <input type="checkbox" checked={l.fait} onChange={() => toggleLigne(l.id)} className="w-4 h-4" />
-            <span className="font-medium" style={{ color: l.fait ? CHECKED_BLUE_TEXT : INK, textDecoration: l.fait ? "none" : "none" }}>{l.libelle}</span>
-            <span className="text-xs" style={{ color: l.fait ? CHECKED_BLUE_TEXT : INK_SOFT }}>{l.compte || "—"}</span>
-            <span className="text-right font-semibold flex items-center gap-1 justify-end" style={{ color: l.fait ? CHECKED_BLUE_TEXT : (l.type === "revenu" ? accent.deep : "#A33B3B") }}>
-              {l.type === "revenu" ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
-              {formatEUR(l.montant)}
-            </span>
-            <button onClick={() => removeLigne(l.id)} className="opacity-40 hover:opacity-100 justify-self-end"><Trash2 size={14} /></button>
-          </div>
-        ))}
+        {baseMensuelle.map((l) => {
+          const enRetard = l.date && l.date < today && !l.fait;
+          return (
+            <div key={l.id}
+              className="grid grid-cols-[auto_1fr_auto_auto_auto_auto] gap-2 items-center px-2 py-2 rounded-md text-sm transition-colors"
+              style={{ background: l.fait ? CHECKED_BLUE : "transparent" }}>
+              <input type="checkbox" checked={l.fait} onChange={() => toggleLigne(l.id)} className="w-4 h-4" />
+              <span className="font-medium flex items-center gap-1.5" style={{ color: l.fait ? CHECKED_BLUE_TEXT : INK }}>
+                {l.libelle}
+                {enRetard && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F3D6D6", color: "#A33B3B" }}>en retard</span>}
+              </span>
+              <span className="text-xs" style={{ color: l.fait ? CHECKED_BLUE_TEXT : INK_SOFT }}>{l.compte || "—"}</span>
+              <input type="date" value={l.date || ""} onChange={(e) => setDateLigne(l.id, e.target.value)}
+                className="text-xs border rounded px-1 py-0.5" style={{ borderColor: LINE, background: l.fait ? "#fff" : "transparent" }} />
+              <span className="text-right font-semibold flex items-center gap-1 justify-end" style={{ color: l.fait ? CHECKED_BLUE_TEXT : (l.type === "revenu" ? accent.deep : "#A33B3B") }}>
+                {l.type === "revenu" ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+                {formatEUR(l.montant)}
+              </span>
+              <button onClick={() => removeLigne(l.id)} className="opacity-40 hover:opacity-100 justify-self-end"><Trash2 size={14} /></button>
+            </div>
+          );
+        })}
         {!baseMensuelle.length && <p className="text-sm px-2" style={{ color: INK_SOFT }}>Aucune ligne pour l'instant — ajoute tes charges fixes et salaires ci-dessous.</p>}
       </div>
 
@@ -394,16 +409,20 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
             {comptes.map((c) => <option key={c.id} value={c.nom}>{c.nom}</option>)}
           </select>
         </Field>
+        <Field label="Date prévue">
+          <input type="date" className={inputCls} style={{ borderColor: LINE }} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+        </Field>
         <Field label="Montant (€)">
           <input type="number" step="0.01" className={inputCls + " w-28"} style={{ borderColor: LINE }} value={form.montant} onChange={(e) => setForm({ ...form, montant: e.target.value })} />
         </Field>
         <button onClick={addLigne} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter</button>
       </div>
 
-      <div className="flex gap-6 mt-3 pt-3 border-t text-sm" style={{ borderColor: LINE }}>
+      <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 pt-3 border-t text-sm" style={{ borderColor: LINE }}>
         <span>Total revenus fixes : <strong>{formatEUR(totalRevenus)}</strong></span>
         <span>Total charges fixes : <strong>{formatEUR(totalDepenses)}</strong></span>
-        <span>Reste théorique : <strong>{formatEUR(totalRevenus - totalDepenses)}</strong></span>
+        <span>Reste théorique (fin de mois) : <strong>{formatEUR(totalRevenus - totalDepenses)}</strong></span>
+        <span>Reçu/prélevé à ce jour : <strong style={{ color: accent.deep }}>{formatEUR(totalRevenusEncaisses - totalDepensesPrelevees)}</strong></span>
       </div>
     </Card>
   );
@@ -412,7 +431,7 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
 /* ------------------------------------------------------------------ */
 /* BUDGET                                                               */
 /* ------------------------------------------------------------------ */
-function BudgetTab({ comptes, setComptes, transactions, setTransactions, categories, setCategories, baseMensuelle, setBaseMensuelle, budgetQuotidien, setBudgetQuotidien, decouvert, setDecouvert, extrasImprevus, setExtrasImprevus, courses, setCourses, accent }) {
+function BudgetTab({ comptes, setComptes, transactions, setTransactions, categories, setCategories, baseMensuelle, setBaseMensuelle, budgetQuotidien, setBudgetQuotidien, decouvert, setDecouvert, extrasImprevus, setExtrasImprevus, courses, setCourses, epargnes, setEpargnes, accent }) {
   const [newCompte, setNewCompte] = useState("");
   const [newSolde, setNewSolde] = useState("0");
   const [form, setForm] = useState({ date: todayISO(), compte: "", categorie: categories[0] || "", type: "depense", montant: "", description: "" });
@@ -423,6 +442,69 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
   const [quotForm, setQuotForm] = useState({ categorie: "", prevu: "" });
   const [courseForm, setCourseForm] = useState({ achat: "", montant: "" });
   const [extraForm, setExtraForm] = useState({ poste: "", montant: "", type: "extra" });
+
+  const importerDonneesExcel = () => {
+    if (!window.confirm("Importer les données de ton fichier Excel ? Ça ajoute des lignes à ta Base mensuelle, ton Quotidien et ton Épargne (ça ne supprime rien de ce qui existe déjà).")) return;
+
+    const nouvellesBase = [
+      // Rentrées d'argent
+      { id: uid(), libelle: "xefi", type: "revenu", compte: "", montant: 2123, fait: false },
+      { id: uid(), libelle: "MIHI", type: "revenu", compte: "", montant: 1450, fait: false },
+      { id: uid(), libelle: "CAF", type: "revenu", compte: "", montant: 1475, fait: false },
+      { id: uid(), libelle: "frais", type: "revenu", compte: "", montant: 464, fait: false },
+      // Dépenses fixes
+      { id: uid(), libelle: "Loyer", type: "depense", compte: "", montant: 840, fait: false },
+      { id: uid(), libelle: "Eau", type: "depense", compte: "", montant: 42.86, fait: false },
+      { id: uid(), libelle: "L'abeille", type: "depense", compte: "", montant: 220, fait: false },
+      { id: uid(), libelle: "Urssaf", type: "depense", compte: "", montant: 150, fait: false },
+      { id: uid(), libelle: "Canva", type: "depense", compte: "", montant: 12, fait: false },
+      { id: uid(), libelle: "fin", type: "depense", compte: "", montant: 108, fait: false },
+      { id: uid(), libelle: "Free", type: "depense", compte: "", montant: 69.96, fait: false },
+      { id: uid(), libelle: "Macif assurance", type: "depense", compte: "", montant: 211, fait: false },
+      { id: uid(), libelle: "Volvo", type: "depense", compte: "", montant: 568, fait: false },
+      { id: uid(), libelle: "Octopus énergie", type: "depense", compte: "", montant: 333, fait: false },
+      { id: uid(), libelle: "AREA", type: "depense", compte: "", montant: 150, fait: false },
+      { id: uid(), libelle: "Spotify", type: "depense", compte: "", montant: 17, fait: false },
+      { id: uid(), libelle: "Mutuelle", type: "depense", compte: "", montant: 38, fait: false },
+      { id: uid(), libelle: "Free mobile", type: "depense", compte: "", montant: 24, fait: false },
+      { id: uid(), libelle: "Cantine Tim", type: "depense", compte: "", montant: 61, fait: false },
+      { id: uid(), libelle: "Internat", type: "depense", compte: "", montant: 365, fait: false },
+      { id: uid(), libelle: "École", type: "depense", compte: "", montant: 63, fait: false },
+      { id: uid(), libelle: "Oze", type: "depense", compte: "", montant: 35, fait: false },
+      { id: uid(), libelle: "Stas", type: "depense", compte: "", montant: 9.56, fait: false },
+      { id: uid(), libelle: "Trampoline", type: "depense", compte: "", montant: 50, fait: false },
+      { id: uid(), libelle: "Claude", type: "depense", compte: "", montant: 90, fait: false },
+      { id: uid(), libelle: "cantine élémentaire", type: "depense", compte: "", montant: 40, fait: false },
+    ];
+    setBaseMensuelle([...baseMensuelle, ...nouvellesBase]);
+
+    setBudgetQuotidien([...budgetQuotidien,
+      { id: uid(), categorie: "Alimentation", prevu: 1100 },
+      { id: uid(), categorie: "Essence", prevu: 500 },
+      { id: uid(), categorie: "epilation", prevu: 25 },
+    ]);
+
+    setEpargnes([...epargnes,
+      { id: uid(), theme: "Timéo", objectif: 300, montant: 300 },
+      { id: uid(), theme: "Léoni", objectif: 264, montant: 264 },
+      { id: uid(), theme: "Leandro", objectif: 240, montant: 240 },
+    ]);
+
+    setCourses([...courses,
+      { id: uid(), achat: "Courses", montant: 365, date: todayISO() },
+      { id: uid(), achat: "courses", montant: 249, date: todayISO() },
+      { id: uid(), achat: "spart (courses)", montant: 66, date: todayISO() },
+    ]);
+
+    setExtrasImprevus([...extrasImprevus,
+      { id: uid(), poste: "tatoo", montant: 180, type: "extra", date: todayISO() },
+      { id: uid(), poste: "running", montant: 190, type: "extra", date: todayISO() },
+      { id: uid(), poste: "resto", montant: 228, type: "extra", date: todayISO() },
+      { id: uid(), poste: "boucherie", montant: 24, type: "extra", date: todayISO() },
+      { id: uid(), poste: "action", montant: 130, type: "extra", date: todayISO() },
+      { id: uid(), poste: "transport", montant: 320, type: "extra", date: todayISO() },
+    ]);
+  };
 
   useEffect(() => {
     if (!form.compte && comptes.length) setForm((f) => ({ ...f, compte: comptes[0].nom }));
@@ -509,6 +591,10 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
   const resteTheorique = totalRentrees - totalDepensesFixes - totalQuotidienPrevu;
   const resteReelApresDecouvert = resteTheorique - (decouvert.rembourseCeMois || 0);
   const resteDisponibleGlobal = resteReelApresDecouvert - totalExtras - totalImprevus;
+  // Où j'en suis VRAIMENT à ce jour : seulement ce qui est coché comme reçu/prélevé + les dépenses réellement engagées (courses, extras)
+  const totalRevenusEncaisses = baseMensuelle.filter((l) => l.type === "revenu" && l.fait).reduce((s, l) => s + l.montant, 0);
+  const totalDepensesPreleveesGlobal = baseMensuelle.filter((l) => l.type === "depense" && l.fait).reduce((s, l) => s + l.montant, 0);
+  const soldeReelAJour = totalRevenusEncaisses - totalDepensesPreleveesGlobal - totalCourses - totalExtras - totalImprevus;
 
   const handleCSV = (e) => {
     const file = e.target.files[0];
@@ -549,6 +635,11 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
 
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
+      <div className="flex justify-end">
+        <button onClick={importerDonneesExcel} className="text-xs px-3 py-1.5 rounded-md font-semibold border flex items-center gap-1.5" style={{ borderColor: LINE, color: accent.deep }}>
+          <Upload size={13} />Importer mes données de départ (fichier Excel)
+        </button>
+      </div>
       {/* Solde global */}
       <div className="rounded-lg p-5 flex flex-wrap gap-6 items-center" style={{ background: accent.soft }}>
         <div>
@@ -684,9 +775,14 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
           <div><p style={{ color: INK_SOFT }}>Rentrées</p><p className="font-serif font-bold text-lg">{formatEUR(totalRentrees)}</p></div>
           <div><p style={{ color: INK_SOFT }}>Dépenses fixes</p><p className="font-serif font-bold text-lg">{formatEUR(totalDepensesFixes)}</p></div>
           <div><p style={{ color: INK_SOFT }}>Quotidien prévu</p><p className="font-serif font-bold text-lg">{formatEUR(totalQuotidienPrevu)}</p></div>
-          <div><p style={{ color: INK_SOFT }}>Reste disponible réel</p><p className="font-serif font-bold text-lg" style={{ color: resteDisponibleGlobal < 0 ? "#A33B3B" : accent.deep }}>{formatEUR(resteDisponibleGlobal)}</p></div>
+          <div><p style={{ color: INK_SOFT }}>Reste disponible en fin de mois (théorique)</p><p className="font-serif font-bold text-lg" style={{ color: resteDisponibleGlobal < 0 ? "#A33B3B" : accent.deep }}>{formatEUR(resteDisponibleGlobal)}</p></div>
+        </div>
+        <div className="mt-3 pt-3 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+          <p style={{ color: INK_SOFT }} className="text-sm">Où j'en suis <strong>vraiment</strong> à ce jour (uniquement ce qui est coché comme reçu/prélevé + courses/extras déjà engagés) :</p>
+          <p className="font-serif font-bold text-2xl" style={{ color: soldeReelAJour < 0 ? "#A33B3B" : accent.deep }}>{formatEUR(soldeReelAJour)}</p>
         </div>
       </div>
+
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* Le Quotidien : budget prévu vs réel */}
