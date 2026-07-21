@@ -10,17 +10,27 @@ export const firebaseConfig = {
 };
 
 import { initializeApp } from "firebase/app";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, getFirestore } from "firebase/firestore";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 
 export const app = initializeApp(firebaseConfig);
 // Cache local persistant : les données lues et les écritures en attente
 // survivent à un rechargement de page (F5) ou une coupure réseau
-// temporaire, au lieu d'être perdues si le serveur n'a pas encore
-// confirmé la réception avant le rechargement.
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-});
+// temporaire. Sur certains navigateurs (notamment Safari/iPhone, en
+// particulier en appli installée), l'initialisation de ce cache peut
+// échouer silencieusement et bloquer TOUT Firestore. On retombe alors
+// sur un Firestore classique (sans persistance locale) pour que l'appli
+// continue de fonctionner partout, quitte à perdre juste ce confort-là.
+let dbInstance;
+try {
+  dbInstance = initializeFirestore(app, {
+    localCache: persistentLocalCache(),
+  });
+} catch (e) {
+  console.error("Cache persistant Firestore indisponible, repli sur le mode standard.", e);
+  dbInstance = getFirestore(app);
+}
+export const db = dbInstance;
 export const auth = getAuth(app);
 
 // Connexion anonyme automatique : pas d'écran de login,
