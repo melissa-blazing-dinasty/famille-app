@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Wallet, CalendarDays, BookOpen, Plus, Trash2, X, Search,
   Upload, TrendingUp, TrendingDown, Link as LinkIcon,
-  PiggyBank, Baby, Calendar, ListChecks, Star, Gift, ExternalLink, CheckCircle2, Lightbulb, Bell, Lock, Unlock, Minus
+  PiggyBank, Baby, Calendar, ListChecks, Star, Gift, ExternalLink, CheckCircle2, Lightbulb, Bell, Lock, Unlock, Minus, Sun, Moon, Cookie, RefreshCw
 } from "lucide-react";
 import Papa from "papaparse";
 import { db, ensureSignedIn } from "./firebase.js";
@@ -113,6 +113,28 @@ function useFirestoreArray(familyCode, authReady, key, fallback) {
 /* plan. Une vraie notification push (appli fermée) demande en plus    */
 /* Firebase Cloud Messaging + une Cloud Function côté serveur.          */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Forcer la mise à jour : vide le cache du service worker (PWA) et    */
+/* recharge la dernière version publiée, sans attendre la mise à jour  */
+/* automatique en arrière-plan.                                        */
+/* ------------------------------------------------------------------ */
+async function forcerMiseAJour() {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const reg of regs) { await reg.update(); }
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch (e) {
+    console.error("Erreur pendant la mise à jour", e);
+  } finally {
+    window.location.reload();
+  }
+}
+
 function useNotifierDuJour(taches, planning) {
   useEffect(() => {
     if (!("Notification" in window)) return;
@@ -232,23 +254,34 @@ export default function App() {
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className="flex-1 sm:flex-none flex sm:flex-col items-center justify-center gap-1.5 py-4 sm:py-6 transition-all relative focus:outline-none"
+              className="flex flex-col shrink-0 items-center justify-center gap-1 min-w-[68px] sm:min-w-0 px-2 py-3 sm:py-6 transition-all relative focus:outline-none"
               style={{
                 background: isActive ? t.accent.main : "transparent",
                 color: isActive ? "#fff" : INK_SOFT,
               }}
             >
-              <Icon size={20} strokeWidth={1.75} />
-              <span className="text-[11px] font-semibold tracking-wide" style={{ writingMode: "horizontal-tb" }}>{t.label}</span>
+              <Icon size={19} strokeWidth={1.75} />
+              <span className="text-[10px] font-semibold tracking-wide whitespace-nowrap">{t.label}</span>
             </button>
           );
         })}
       </nav>
 
       <main className="flex-1 min-w-0">
-        <header className="px-5 sm:px-8 py-5 border-b" style={{ borderColor: LINE, background: PAPER_DARK }}>
-          <p className="text-[11px] uppercase tracking-[0.2em] font-semibold" style={{ color: active.accent.main }}>Carnet de famille</p>
-          <h1 className="text-2xl sm:text-3xl font-serif font-semibold mt-0.5" style={{ color: INK }}>{active.label}</h1>
+        <header className="px-5 sm:px-8 py-5 border-b flex items-start justify-between gap-3" style={{ borderColor: LINE, background: PAPER_DARK }}>
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.2em] font-semibold" style={{ color: active.accent.main }}>Carnet de famille</p>
+            <h1 className="text-2xl sm:text-3xl font-serif font-semibold mt-0.5" style={{ color: INK }}>{active.label}</h1>
+          </div>
+          <button
+            onClick={forcerMiseAJour}
+            title="Force le rechargement de la dernière version de l'appli"
+            className="shrink-0 flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-md border mt-1"
+            style={{ borderColor: LINE, color: INK_SOFT }}
+          >
+            <RefreshCw size={13} />
+            <span className="hidden sm:inline">Mettre à jour</span>
+          </button>
         </header>
         <div className="px-5 sm:px-8 py-6">
           {!loaded ? (
@@ -331,13 +364,13 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
 
   const addLigne = () => {
     if (!form.libelle.trim() || !form.montant) return;
-    setBaseMensuelle([...baseMensuelle, { id: uid(), ...form, montant: Number(form.montant), fait: false }]);
+    setBaseMensuelle((prev) => [...prev, { id: uid(), ...form, montant: Number(form.montant), fait: false }]);
     setForm({ ...form, libelle: "", montant: "", date: "" });
   };
-  const removeLigne = (id) => setBaseMensuelle(baseMensuelle.filter((l) => l.id !== id));
-  const toggleLigne = (id) => setBaseMensuelle(baseMensuelle.map((l) => (l.id === id ? { ...l, fait: !l.fait } : l)));
-  const setDateLigne = (id, date) => setBaseMensuelle(baseMensuelle.map((l) => (l.id === id ? { ...l, date } : l)));
-  const resetTout = () => setBaseMensuelle(baseMensuelle.map((l) => ({ ...l, fait: false })));
+  const removeLigne = (id) => setBaseMensuelle((prev) => prev.filter((l) => l.id !== id));
+  const toggleLigne = (id) => setBaseMensuelle((prev) => prev.map((l) => (l.id === id ? { ...l, fait: !l.fait } : l)));
+  const setDateLigne = (id, date) => setBaseMensuelle((prev) => prev.map((l) => (l.id === id ? { ...l, date } : l)));
+  const resetTout = () => setBaseMensuelle((prev) => prev.map((l) => ({ ...l, fait: false })));
 
   const totalDepenses = baseMensuelle.filter((l) => l.type === "depense").reduce((s, l) => s + l.montant, 0);
   const totalRevenus = baseMensuelle.filter((l) => l.type === "revenu").reduce((s, l) => s + l.montant, 0);
@@ -476,27 +509,27 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
       { id: uid(), libelle: "Claude", type: "depense", compte: "", montant: 90, fait: false },
       { id: uid(), libelle: "cantine élémentaire", type: "depense", compte: "", montant: 40, fait: false },
     ];
-    setBaseMensuelle([...baseMensuelle, ...nouvellesBase]);
+    setBaseMensuelle((prev) => [...prev, ...nouvellesBase]);
 
-    setBudgetQuotidien([...budgetQuotidien,
+    setBudgetQuotidien((prev) => [...prev,
       { id: uid(), categorie: "Alimentation", prevu: 1100 },
       { id: uid(), categorie: "Essence", prevu: 500 },
       { id: uid(), categorie: "epilation", prevu: 25 },
     ]);
 
-    setEpargnes([...epargnes,
+    setEpargnes((prev) => [...prev,
       { id: uid(), theme: "Timéo", objectif: 300, montant: 300 },
       { id: uid(), theme: "Léoni", objectif: 264, montant: 264 },
       { id: uid(), theme: "Leandro", objectif: 240, montant: 240 },
     ]);
 
-    setCourses([...courses,
+    setCourses((prev) => [...prev,
       { id: uid(), achat: "Courses", montant: 365, date: todayISO() },
       { id: uid(), achat: "courses", montant: 249, date: todayISO() },
       { id: uid(), achat: "spart (courses)", montant: 66, date: todayISO() },
     ]);
 
-    setExtrasImprevus([...extrasImprevus,
+    setExtrasImprevus((prev) => [...prev,
       { id: uid(), poste: "tatoo", montant: 180, type: "extra", date: todayISO() },
       { id: uid(), poste: "running", montant: 190, type: "extra", date: todayISO() },
       { id: uid(), poste: "resto", montant: 228, type: "extra", date: todayISO() },
@@ -522,23 +555,26 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
 
   const addCompte = () => {
     if (!newCompte.trim()) return;
-    setComptes([...comptes, { id: uid(), nom: newCompte.trim(), solde: Number(newSolde) || 0 }]);
+    setComptes((prev) => [...prev, { id: uid(), nom: newCompte.trim(), solde: Number(newSolde) || 0 }]);
     setNewCompte(""); setNewSolde("0");
   };
   const removeCompte = (id) => {
     const c = comptes.find((c) => c.id === id);
-    setComptes(comptes.filter((c) => c.id !== id));
-    if (c) setTransactions(transactions.filter((t) => t.compte !== c.nom));
+    setComptes((prev) => prev.filter((c) => c.id !== id));
+    if (c) setTransactions((prev) => prev.filter((t) => t.compte !== c.nom));
+  };
+  const updateSoldeCompte = (id, solde) => {
+    setComptes((prev) => prev.map((c) => (c.id === id ? { ...c, solde: Number(solde) || 0 } : c)));
   };
   const addTransaction = () => {
     if (!form.compte || !form.montant) return;
-    setTransactions([{ id: uid(), ...form, montant: Number(form.montant) }, ...transactions]);
+    setTransactions((prev) => [{ id: uid(), ...form, montant: Number(form.montant) }, ...prev]);
     setForm({ ...form, montant: "", description: "" });
   };
-  const removeTransaction = (id) => setTransactions(transactions.filter((t) => t.id !== id));
+  const removeTransaction = (id) => setTransactions((prev) => prev.filter((t) => t.id !== id));
   const addCategorie = () => {
     if (!newCat.trim() || categories.includes(newCat.trim())) return;
-    setCategories([...categories, newCat.trim()]);
+    setCategories((prev) => [...prev, newCat.trim()]);
     setNewCat("");
   };
 
@@ -553,11 +589,19 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
   // --- Le Quotidien : budget prévu par catégorie ---
   const addQuot = () => {
     if (!quotForm.categorie.trim() || !quotForm.prevu) return;
-    setBudgetQuotidien([...budgetQuotidien, { id: uid(), categorie: quotForm.categorie.trim(), prevu: Number(quotForm.prevu) || 0 }]);
+    setBudgetQuotidien((prev) => [...prev, { id: uid(), categorie: quotForm.categorie.trim(), prevu: Number(quotForm.prevu) || 0 }]);
     setQuotForm({ categorie: "", prevu: "" });
   };
-  const removeQuot = (id) => setBudgetQuotidien(budgetQuotidien.filter((q) => q.id !== id));
-  const reelParCategorieMap = Object.fromEntries(parCategorie);
+  const removeQuot = (id) => setBudgetQuotidien((prev) => prev.filter((q) => q.id !== id));
+  const reelParCategorieMapBrute = Object.fromEntries(parCategorie);
+  // Les courses saisies dans "Suivi courses" comptent comme du réel pour la catégorie Alimentation
+  const totalCoursesAnticipe = courses.reduce((s, c) => s + c.montant, 0);
+  const reelParCategorieMap = Object.fromEntries(
+    budgetQuotidien.map((q) => [
+      q.categorie,
+      (reelParCategorieMapBrute[q.categorie] || 0) + (q.categorie.toLowerCase().includes("aliment") ? totalCoursesAnticipe : 0),
+    ])
+  );
   const totalQuotidienPrevu = budgetQuotidien.reduce((s, q) => s + q.prevu, 0);
   const totalQuotidienReel = budgetQuotidien.reduce((s, q) => s + (reelParCategorieMap[q.categorie] || 0), 0);
 
@@ -567,11 +611,11 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
   // --- Suivi courses (cumul) ---
   const addCourse = () => {
     if (!courseForm.achat.trim() || !courseForm.montant) return;
-    setCourses([{ id: uid(), achat: courseForm.achat.trim(), montant: Number(courseForm.montant) || 0, date: todayISO() }, ...courses]);
+    setCourses((prev) => [{ id: uid(), achat: courseForm.achat.trim(), montant: Number(courseForm.montant) || 0, date: todayISO() }, ...prev]);
     setCourseForm({ achat: "", montant: "" });
   };
-  const removeCourse = (id) => setCourses(courses.filter((c) => c.id !== id));
-  const totalCourses = courses.reduce((s, c) => s + c.montant, 0);
+  const removeCourse = (id) => setCourses((prev) => prev.filter((c) => c.id !== id));
+  const totalCourses = totalCoursesAnticipe;
   const budgetAlimentation = budgetQuotidien.find((q) => q.categorie.toLowerCase().includes("aliment"))?.prevu || 0;
   const resteDisponibleCourses = budgetAlimentation - totalCourses;
 
@@ -581,7 +625,7 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
     setExtrasImprevus([{ id: uid(), poste: extraForm.poste.trim(), montant: Number(extraForm.montant) || 0, type: extraForm.type, date: todayISO() }, ...extrasImprevus]);
     setExtraForm({ poste: "", montant: "", type: "extra" });
   };
-  const removeExtra = (id) => setExtrasImprevus(extrasImprevus.filter((e) => e.id !== id));
+  const removeExtra = (id) => setExtrasImprevus((prev) => prev.filter((e) => e.id !== id));
   const totalExtras = extrasImprevus.filter((e) => e.type === "extra").reduce((s, e) => s + e.montant, 0);
   const totalImprevus = extrasImprevus.filter((e) => e.type === "imprevu").reduce((s, e) => s + e.montant, 0);
 
@@ -626,8 +670,8 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
         nouvelles.push({ id: uid(), date, compte: compteRaw, categorie: catRaw, type, montant, description: descRaw || "" });
       });
       const comptesManquants = [...comptesVus].filter((n) => !comptes.some((c) => c.nom === n)).map((n) => ({ id: uid(), nom: n, solde: 0 }));
-      if (comptesManquants.length) setComptes([...comptes, ...comptesManquants]);
-      setTransactions([...nouvelles, ...transactions]);
+      if (comptesManquants.length) setComptes((prev) => [...prev, ...comptesManquants]);
+      setTransactions((prev) => [...nouvelles, ...prev]);
     };
     reader.readAsText(file);
     e.target.value = "";
@@ -664,12 +708,22 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
       {/* Comptes */}
       <Card>
         <SectionTitle accent={accent}>Comptes</SectionTitle>
-        <div className="flex flex-wrap gap-2 mb-3">
+        <div className="flex flex-col gap-1.5 mb-3">
           {comptes.map((c) => (
-            <span key={c.id} className="inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-full text-sm" style={{ background: accent.soft, color: accent.deep }}>
-              {c.nom}
-              <button onClick={() => removeCompte(c.id)} className="hover:opacity-70"><X size={13} /></button>
-            </span>
+            <div key={c.id} className="flex items-center gap-2 flex-wrap px-2.5 py-1.5 rounded-md" style={{ background: accent.soft }}>
+              <span className="font-medium text-sm flex-1 min-w-[100px]" style={{ color: accent.deep }}>{c.nom}</span>
+              <label className="flex items-center gap-1.5 text-xs" style={{ color: INK_SOFT }}>
+                Solde initial
+                <input
+                  type="number" step="0.01"
+                  defaultValue={c.solde}
+                  onBlur={(e) => updateSoldeCompte(c.id, e.target.value)}
+                  className="border rounded-md px-2 py-1 text-sm w-24 bg-white"
+                  style={{ borderColor: LINE }}
+                />
+              </label>
+              <button onClick={() => removeCompte(c.id)} className="opacity-50 hover:opacity-100"><X size={15} /></button>
+            </div>
           ))}
           {!comptes.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucun compte pour le moment — ajoute ton premier compte.</p>}
         </div>
@@ -895,20 +949,25 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
 
 const MOMENT_LABELS = { midi: "Midi", gouter: "Goûter", soir: "Soir" };
 
+const MOMENT_ICONS = { midi: Sun, gouter: Cookie, soir: Moon };
+
 function MomentRow({ label, date, moment, types, getEntry, setEntry, recettes, accent, single }) {
+  const Icon = MOMENT_ICONS[moment] || Sun;
   return (
-    <div className="rounded-md p-2.5" style={{ background: accent.soft }}>
-      <p className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: accent.deep }}>{label}</p>
-      <div className={`grid gap-2 ${single ? "grid-cols-1 max-w-xs" : "grid-cols-1 sm:grid-cols-3"}`}>
+    <div className="rounded-lg p-3.5" style={{ background: accent.soft }}>
+      <p className="text-xs font-bold uppercase tracking-wide mb-2.5 flex items-center gap-1.5" style={{ color: accent.deep }}>
+        <Icon size={15} />{label}
+      </p>
+      <div className={`grid gap-3 ${single ? "grid-cols-1 max-w-xs" : "grid-cols-1 sm:grid-cols-3"}`}>
         {types.map((type) => {
           const entry = getEntry(date, moment, type);
           const listId = `list-${moment}-${type}`;
           return (
             <div key={type}>
-              {!single && <p className="text-[10px] font-semibold uppercase tracking-wide mb-0.5" style={{ color: INK_SOFT }}>{type}</p>}
+              {!single && <p className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: INK_SOFT }}>{type}</p>}
               <input
                 list={listId}
-                className="w-full border rounded-md px-2 py-1.5 text-sm bg-white focus:outline-none"
+                className="w-full border rounded-md px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2"
                 style={{ borderColor: LINE }}
                 defaultValue={entry ? entry.nom : ""}
                 placeholder="—"
@@ -948,11 +1007,11 @@ function MenusTab({ menus, setMenus, recettes, accent, menuIdees, setMenuIdees, 
   const setEntry = (date, moment, type, nom) => {
     const existing = getEntry(date, moment, type);
     if (!nom.trim()) {
-      if (existing) setMenus(menus.filter((m) => m.id !== existing.id));
+      if (existing) setMenus((prev) => prev.filter((m) => m.id !== existing.id));
       return;
     }
-    if (existing) setMenus(menus.map((m) => (m.id === existing.id ? { ...m, nom } : m)));
-    else setMenus([...menus, { id: uid(), date, moment, type, nom }]);
+    if (existing) setMenus((prev) => prev.map((m) => (m.id === existing.id ? { ...m, nom } : m)));
+    else setMenus((prev) => [...prev, { id: uid(), date, moment, type, nom }]);
   };
 
   const historique = menus
@@ -994,10 +1053,10 @@ function MenusTab({ menus, setMenus, recettes, accent, menuIdees, setMenuIdees, 
             </Field>
           </Card>
 
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
             {jours.map((date) => (
-              <Card key={date}>
-                <p className="font-serif font-semibold capitalize mb-3" style={{ color: accent.deep }}>{formatDateFR(date)}</p>
+              <Card key={date} className="p-4 sm:p-5">
+                <p className="font-serif font-semibold capitalize mb-3.5 text-base" style={{ color: accent.deep }}>{formatDateFR(date)}</p>
                 <div className="flex flex-col gap-3">
                   <MomentRow label="Midi" date={date} moment="midi" types={["Entrée", "Plat", "Dessert"]} getEntry={getEntry} setEntry={setEntry} recettes={recettes} accent={accent} />
                   <MomentRow label="Goûter" date={date} moment="gouter" types={["Goûter"]} getEntry={getEntry} setEntry={setEntry} recettes={recettes} accent={accent} single />
@@ -1053,7 +1112,7 @@ function MenusTab({ menus, setMenus, recettes, accent, menuIdees, setMenuIdees, 
                     <p>{idee.texte}</p>
                     <p className="text-xs" style={{ color: INK_SOFT }}>proposé par {enfant ? enfant.prenom : "un enfant"} · {idee.date}</p>
                   </div>
-                  <button onClick={() => setMenuIdees(menuIdees.filter((i) => i.id !== idee.id))} className="opacity-40 hover:opacity-100 shrink-0"><Trash2 size={14} /></button>
+                  <button onClick={() => setMenuIdees((prev) => prev.filter((i) => i.id !== idee.id))} className="opacity-40 hover:opacity-100 shrink-0"><Trash2 size={14} /></button>
                 </div>
               );
             })}
@@ -1084,7 +1143,7 @@ function RecettesTab({ recettes, setRecettes, menus, accent }) {
     setRecettes([{ id: uid(), ...form, date: todayISO() }, ...recettes]);
     setForm({ nom: "", type: TYPES_PLAT[1], lien: "", texte: "" });
   };
-  const removeRecette = (id) => setRecettes(recettes.filter((r) => r.id !== id));
+  const removeRecette = (id) => setRecettes((prev) => prev.filter((r) => r.id !== id));
 
   const filtered = recettes.filter((r) =>
     (filtreType === "Tous" || r.type === filtreType) &&
@@ -1183,14 +1242,14 @@ function EpargneTab({ epargnes, setEpargnes, accent }) {
 
   const addTheme = () => {
     if (!form.theme.trim() || !form.objectif) return;
-    setEpargnes([...epargnes, { id: uid(), theme: form.theme.trim(), objectif: Number(form.objectif), montant: 0 }]);
+    setEpargnes((prev) => [...prev, { id: uid(), theme: form.theme.trim(), objectif: Number(form.objectif), montant: 0 }]);
     setForm({ theme: "", objectif: "" });
   };
-  const removeTheme = (id) => setEpargnes(epargnes.filter((e) => e.id !== id));
+  const removeTheme = (id) => setEpargnes((prev) => prev.filter((e) => e.id !== id));
   const verser = (id, sens) => {
     const val = Number(montants[id] || 0);
     if (!val) return;
-    setEpargnes(epargnes.map((e) => (e.id === id ? { ...e, montant: Math.max(0, e.montant + sens * val) } : e)));
+    setEpargnes((prev) => prev.map((e) => (e.id === id ? { ...e, montant: Math.max(0, e.montant + sens * val) } : e)));
     setMontants({ ...montants, [id]: "" });
   };
 
@@ -1301,18 +1360,18 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   const addEnfant = () => {
     if (!newPrenom.trim()) return;
     const e = { id: uid(), prenom: newPrenom.trim(), soldePoche: 0, bonPoints: 0, jaugeLabel: "", jaugeCible: 0, jaugeRecompense: 0 };
-    setEnfants([...enfants, e]);
+    setEnfants((prev) => [...prev, e]);
     setSelectedId(e.id);
     setNewPrenom("");
   };
   const removeEnfant = (id) => {
-    setEnfants(enfants.filter((e) => e.id !== id));
-    setTaches(taches.filter((t) => t.enfantId !== id));
-    setRecompenses(recompenses.filter((r) => r.enfantId !== id));
+    setEnfants((prev) => prev.filter((e) => e.id !== id));
+    setTaches((prev) => prev.filter((t) => t.enfantId !== id));
+    setRecompenses((prev) => prev.filter((r) => r.enfantId !== id));
     if (selectedId === id) setSelectedId(null);
   };
 
-  const updateEnfant = (patch) => setEnfants(enfants.map((e) => (e.id === selectedId ? { ...e, ...patch } : e)));
+  const updateEnfant = (patch) => setEnfants((prev) => prev.map((e) => (e.id === selectedId ? { ...e, ...patch } : e)));
 
   const ajusterSolde = (sens) => {
     const val = Number(ajustePoche || 0);
@@ -1331,7 +1390,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   const tachesEnfant = taches.filter((t) => t.enfantId === selectedId);
   const addTache = (titre, points) => {
     if (!(titre || tacheForm.titre).trim() || !enfant) return;
-    setTaches([...taches, {
+    setTaches((prev) => [...prev, {
       id: uid(), enfantId: selectedId,
       titre: (titre || tacheForm.titre).trim(),
       points: Number(points ?? tacheForm.points) || 0,
@@ -1340,28 +1399,28 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
     }]);
     if (!titre) setTacheForm({ titre: "", points: 5, rappelDate: "" });
   };
-  const removeTache = (id) => setTaches(taches.filter((t) => t.id !== id));
+  const removeTache = (id) => setTaches((prev) => prev.filter((t) => t.id !== id));
   // Action enfant : signaler que la tâche est faite → passe "en attente de validation".
   // Ne donne aucun point tant qu'un parent n'a pas validé.
   const marquerFait = (t) => {
-    setTaches(taches.map((x) => (x.id === t.id ? { ...x, statut: x.statut === "a_faire" ? "en_attente" : "a_faire" } : x)));
+    setTaches((prev) => prev.map((x) => (x.id === t.id ? { ...x, statut: x.statut === "a_faire" ? "en_attente" : "a_faire" } : x)));
   };
   // Actions parent uniquement : valider donne les points, refuser renvoie la tâche à faire.
   const validerTache = (t) => {
-    setTaches(taches.map((x) => (x.id === t.id ? { ...x, statut: "valide" } : x)));
+    setTaches((prev) => prev.map((x) => (x.id === t.id ? { ...x, statut: "valide" } : x)));
     updateEnfant({ bonPoints: enfant.bonPoints + t.points });
   };
   const refuserTache = (t) => {
-    setTaches(taches.map((x) => (x.id === t.id ? { ...x, statut: "a_faire" } : x)));
+    setTaches((prev) => prev.map((x) => (x.id === t.id ? { ...x, statut: "a_faire" } : x)));
   };
 
   const recompensesEnfant = recompenses.filter((r) => r.enfantId === selectedId);
   const addRecompense = () => {
     if (!recForm.titre.trim() || !enfant) return;
-    setRecompenses([...recompenses, { id: uid(), enfantId: selectedId, titre: recForm.titre.trim(), coutPoints: Number(recForm.coutPoints) || 0 }]);
+    setRecompenses((prev) => [...prev, { id: uid(), enfantId: selectedId, titre: recForm.titre.trim(), coutPoints: Number(recForm.coutPoints) || 0 }]);
     setRecForm({ titre: "", coutPoints: 20 });
   };
-  const removeRecompense = (id) => setRecompenses(recompenses.filter((r) => r.id !== id));
+  const removeRecompense = (id) => setRecompenses((prev) => prev.filter((r) => r.id !== id));
   const echangerRecompense = (r) => {
     if (!enfant || enfant.bonPoints < r.coutPoints) return;
     updateEnfant({ bonPoints: enfant.bonPoints - r.coutPoints });
@@ -1381,7 +1440,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
 
   const envoyerIdee = () => {
     if (!idee.trim() || !enfant) return;
-    setMenuIdees([...menuIdees, { id: uid(), enfantId: selectedId, texte: idee.trim(), date: today }]);
+    setMenuIdees((prev) => [...prev, { id: uid(), enfantId: selectedId, texte: idee.trim(), date: today }]);
     setIdee("");
   };
 
@@ -1662,10 +1721,10 @@ function PlanningTab({ planning, setPlanning, accent }) {
 
   const addEvent = () => {
     if (!form.titre.trim()) return;
-    setPlanning([...planning, { id: uid(), ...form }]);
+    setPlanning((prev) => [...prev, { id: uid(), ...form }]);
     setForm({ titre: "", date: todayISO(), heure: "09:00", pourEnfant: false, description: "" });
   };
-  const removeEvent = (id) => setPlanning(planning.filter((p) => p.id !== id));
+  const removeEvent = (id) => setPlanning((prev) => prev.filter((p) => p.id !== id));
 
   const filtered = planning
     .filter((p) => filtre === "Tous" || (filtre === "Enfants" ? p.pourEnfant : !p.pourEnfant))
@@ -1752,8 +1811,8 @@ function TodoTab({ todos, setTodos, accent }) {
     setTodos([{ id: uid(), titre: titre.trim(), partage, fait: false }, ...todos]);
     setTitre("");
   };
-  const toggle = (id) => setTodos(todos.map((t) => (t.id === id ? { ...t, fait: !t.fait } : t)));
-  const remove = (id) => setTodos(todos.filter((t) => t.id !== id));
+  const toggle = (id) => setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, fait: !t.fait } : t)));
+  const remove = (id) => setTodos((prev) => prev.filter((t) => t.id !== id));
 
   const filtered = todos.filter((t) => filtre === "Tous" || (filtre === "Solo" ? !t.partage : t.partage));
 
