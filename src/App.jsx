@@ -83,6 +83,15 @@ async function saveKeyFS(familyCode, key, value) {
   }
 }
 
+// Petit système pour remonter les erreurs Firestore jusqu'à l'interface
+// (utile pour diagnostiquer sur un appareil où on n'a pas accès à la
+// console technique, comme un iPhone).
+const firestoreErrorListeners = new Set();
+function reportFirestoreError(key, err) {
+  const message = `${key} : ${err?.code || err?.message || String(err)}`;
+  firestoreErrorListeners.forEach((fn) => fn(message));
+}
+
 function useFirestoreArray(familyCode, authReady, key, fallback) {
   const [value, setValueState] = useState(fallback);
   const [ready, setReady] = useState(false);
@@ -103,7 +112,7 @@ function useFirestoreArray(familyCode, authReady, key, fallback) {
         }
         setReady(true);
       },
-      (err) => { console.error("Erreur de lecture", key, err); setReady(true); }
+      (err) => { console.error("Erreur de lecture", key, err); reportFirestoreError(key, err); setReady(true); }
     );
     return () => unsub();
   }, [familyCode, authReady, key]);
@@ -114,7 +123,9 @@ function useFirestoreArray(familyCode, authReady, key, fallback) {
       const nextStr = JSON.stringify(next);
       if (nextStr !== lastKnown.current) {
         lastKnown.current = nextStr;
-        saveKeyFS(familyCode, key, next);
+        saveKeyFS(familyCode, key, next).then((ok) => {
+          if (!ok) reportFirestoreError(key, "échec de l'écriture (voir console)");
+        });
       }
       return next;
     });
@@ -218,9 +229,30 @@ export default function App() {
   const [tab, setTab] = useState("budget");
   const [familyCode, setFamilyCode] = useState(() => localStorage.getItem("familyCode") || "");
   const [authReady, setAuthReady] = useState(false);
+  const [syncErrors, setSyncErrors] = useState([]);
 
   // Connexion anonyme Firebase (une fois, avant tout accès Firestore)
-  useEffect(() => { ensureSignedIn().then(() => setAuthReady(true)); }, []);
+  useEffect(() => {
+    ensureSignedIn()
+      .then(() => setAuthReady(true))
+      .catch((err) => setSyncErrors((prev) => [...prev.slice(-3), `connexion : ${err?.code || err?.message || err}`]));
+    // Si la connexion reste bloquée plus de 10 secondes, on le signale
+    // (utile sur des navigateurs qui bloquent silencieusement le stockage
+    // nécessaire à l'authentification, comme certaines configs Safari).
+    const timeout = setTimeout(() => {
+      setAuthReady((ready) => {
+        if (!ready) setSyncErrors((prev) => [...prev.slice(-3), "connexion : bloquée depuis plus de 10s (voir ci-dessous)"]);
+        return ready;
+      });
+    }, 10000);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    const listener = (message) => setSyncErrors((prev) => [...prev.slice(-3), message]);
+    firestoreErrorListeners.add(listener);
+    return () => firestoreErrorListeners.delete(listener);
+  }, []);
 
   const [comptes, setComptes, r1] = useFirestoreArray(familyCode, authReady, "comptes", []);
   const [transactions, setTransactions, r2] = useFirestoreArray(familyCode, authReady, "transactions", []);
@@ -294,6 +326,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen w-full flex flex-col sm:flex-row" style={{ background: PAPER, color: INK, fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
+      {!!syncErrors.length && (
+        <div className="fixed top-0 left-0 right-0 z-50 p-3" style={{ background: "#A33B3B" }}>
+          <p className="text-xs text-white font-semibold mb-1">⚠️ Problème de connexion aux données — copie ce message pour le support :</p>
+          {syncErrors.map((msg, i) => (
+            <p key={i} className="text-xs text-white font-mono break-all">{msg}</p>
+          ))}
+        </div>
+      )}
       {/* Onglets style classeur */}
       <nav className="flex sm:flex-col shrink-0 sm:w-20 border-b sm:border-b-0 sm:border-r overflow-x-auto sm:overflow-y-auto" style={{ borderColor: LINE }}>
         {tabs.map((t) => {
