@@ -1947,19 +1947,23 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
     if (selectedId === id) setSelectedId(null);
   };
 
-  const updateEnfant = (patch) => setEnfants((prev) => prev.map((e) => (e.id === selectedId ? { ...e, ...patch } : e)));
+  // Accepte soit un objet (patch direct), soit une fonction (e) => patch,
+  // qui reçoit l'enfant le plus À JOUR (celui de "prev", pas une valeur
+  // potentiellement périmée capturée plus tôt dans le rendu) — ça évite
+  // qu'un clic rapide se base sur un ancien total et fausse le calcul.
+  const updateEnfant = (patch) => setEnfants((prev) => prev.map((e) => (e.id === selectedId ? { ...e, ...(typeof patch === "function" ? patch(e) : patch) } : e)));
 
   const ajusterSolde = (sens) => {
     const val = Number(ajustePoche || 0);
     if (!val || !enfant) return;
-    updateEnfant({ soldePoche: Math.max(0, enfant.soldePoche + sens * val) });
+    updateEnfant((e) => ({ soldePoche: Math.max(0, e.soldePoche + sens * val) }));
     setAjustePoche("");
   };
 
   const ajusterPoints = (sens) => {
     const val = Number(ajustePoints || 0);
     if (!val || !enfant) return;
-    updateEnfant({ bonPoints: Math.max(0, enfant.bonPoints + sens * val) });
+    updateEnfant((e) => ({ bonPoints: e.bonPoints + sens * val }));
     setAjustePoints("");
   };
 
@@ -1967,11 +1971,11 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   const appliquerSanction = (motif, points) => {
     if (!enfant || !motif.trim() || !points) return;
     setSanctions((prev) => [{ id: uid(), enfantId: selectedId, motif: motif.trim(), points: Number(points), date: todayISO() }, ...prev]);
-    updateEnfant({ bonPoints: Math.max(0, enfant.bonPoints - Number(points)) });
+    updateEnfant((e) => ({ bonPoints: e.bonPoints - Number(points) }));
   };
   const annulerSanction = (s) => {
     setSanctions((prev) => prev.filter((x) => x.id !== s.id));
-    updateEnfant({ bonPoints: enfant.bonPoints + s.points });
+    updateEnfant((e) => ({ bonPoints: e.bonPoints + s.points }));
   };
 
   const tachesEnfant = taches.filter((t) => t.enfantId === selectedId);
@@ -1995,7 +1999,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   // Actions parent uniquement : valider donne les points, refuser renvoie la tâche à faire.
   const validerTache = (t) => {
     setTaches((prev) => prev.map((x) => (x.id === t.id ? { ...x, statut: "valide" } : x)));
-    updateEnfant({ bonPoints: enfant.bonPoints + t.points });
+    updateEnfant((e) => ({ bonPoints: e.bonPoints + t.points }));
   };
   const refuserTache = (t) => {
     setTaches((prev) => prev.map((x) => (x.id === t.id ? { ...x, statut: "a_faire" } : x)));
@@ -2010,7 +2014,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   const removeRecompense = (id) => setRecompenses((prev) => prev.filter((r) => r.id !== id));
   const echangerRecompense = (r) => {
     if (!enfant || enfant.bonPoints < r.coutPoints) return;
-    updateEnfant({ bonPoints: enfant.bonPoints - r.coutPoints });
+    updateEnfant((e) => ({ bonPoints: e.bonPoints - r.coutPoints }));
   };
 
   const activerJauge = () => {
@@ -2020,7 +2024,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   };
   const encaisserJauge = () => {
     if (!enfant || enfant.bonPoints < enfant.jaugeCible) return;
-    updateEnfant({ soldePoche: enfant.soldePoche + enfant.jaugeRecompense, bonPoints: enfant.bonPoints - enfant.jaugeCible });
+    updateEnfant((e) => ({ soldePoche: e.soldePoche + e.jaugeRecompense, bonPoints: e.bonPoints - e.jaugeCible }));
   };
 
   const prochainMenus = menus.filter((m) => m.date >= today).sort((a, b) => (a.date > b.date ? 1 : -1)).slice(0, 12);
@@ -2100,7 +2104,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
                       <p className="text-xs" style={{ color: INK_SOFT }}>{titre}</p>
                     </div>
                   </div>
-                  <span className="font-serif font-bold flex items-center gap-1" style={{ color: accent.deep }}><Star size={15} />{e.bonPoints}</span>
+                  <span className="font-serif font-bold flex items-center gap-1" style={{ color: e.bonPoints < 0 ? "#A33B3B" : accent.deep }}><Star size={15} />{e.bonPoints}</span>
                 </div>
               );
             })}
@@ -2136,7 +2140,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
             {/* Bons points */}
             <Card>
               <SectionTitle accent={accent}>Bons points</SectionTitle>
-              <p className="text-2xl font-serif font-bold flex items-center gap-2 mb-2" style={{ color: accent.deep }}><Star size={22} />{enfant.bonPoints}</p>
+              <p className="text-2xl font-serif font-bold flex items-center gap-2 mb-2" style={{ color: enfant.bonPoints < 0 ? "#A33B3B" : accent.deep }}><Star size={22} />{enfant.bonPoints}</p>
               {modeParent ? (
                 <div className="flex items-center gap-1.5">
                   <input type="number" placeholder="Points" className={inputCls + " w-20"} style={{ borderColor: LINE }} value={ajustePoints} onChange={(e) => setAjustePoints(e.target.value)} />
