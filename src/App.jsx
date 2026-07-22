@@ -2,10 +2,10 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Wallet, CalendarDays, BookOpen, Plus, Trash2, X, Search,
   Upload, TrendingUp, TrendingDown, Link as LinkIcon,
-  PiggyBank, Baby, Calendar, ListChecks, Star, Gift, ExternalLink, CheckCircle2, Lightbulb, Bell, Lock, Unlock, Minus, Sun, Moon, Cookie, RefreshCw, Save, ChevronDown
+  PiggyBank, Baby, Calendar, ListChecks, Star, Gift, ExternalLink, CheckCircle2, Lightbulb, Bell, Lock, Unlock, Minus, Sun, Moon, Cookie, RefreshCw, Save, ChevronDown, Dumbbell, Trophy, Ruler, Activity, Wind, Flame, Zap
 } from "lucide-react";
 import Papa from "papaparse";
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { PieChart, Pie, Cell, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { db, ensureSignedIn } from "./firebase.js";
 import { doc, onSnapshot, setDoc, serverTimestamp, waitForPendingWrites } from "firebase/firestore";
 
@@ -27,6 +27,7 @@ const ACCENTS = {
   enfants: { main: "#C99A2E", soft: "#F5EBD2", deep: "#8F6B18" },
   planning: { main: "#4C5B8C", soft: "#E1E4F0", deep: "#333F66" },
   todo: { main: "#5A6570", soft: "#E7EAEC", deep: "#3C444C" },
+  sport: { main: "#B5453A", soft: "#F3DEDB", deep: "#7E2F27" },
 };
 
 const DEFAULT_CATEGORIES = ["Alimentation", "Logement", "Transport", "Loisirs", "Santé", "Enfants", "Autres"];
@@ -286,7 +287,11 @@ export default function App() {
   const [decouvert, setDecouvert, r16] = useFirestoreArray(familyCode, authReady, "decouvert", { debutMois: 0, rembourseCeMois: 0 });
   const [extrasImprevus, setExtrasImprevus, r17] = useFirestoreArray(familyCode, authReady, "extrasImprevus", []);
   const [courses, setCourses, r18] = useFirestoreArray(familyCode, authReady, "courses", []);
-  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17 && r18;
+  const [sportMembres, setSportMembres, r19] = useFirestoreArray(familyCode, authReady, "sportMembres", []);
+  const [mensurations, setMensurations, r20] = useFirestoreArray(familyCode, authReady, "mensurations", []);
+  const [seancesSport, setSeancesSport, r21] = useFirestoreArray(familyCode, authReady, "seancesSport", []);
+  const [sanctions, setSanctions, r22] = useFirestoreArray(familyCode, authReady, "sanctions", []);
+  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17 && r18 && r19 && r20 && r21 && r22;
 
   useNotifierDuJour(taches, planning);
 
@@ -335,6 +340,7 @@ export default function App() {
     { id: "enfants", label: "Enfants", icon: Baby, accent: ACCENTS.enfants },
     { id: "planning", label: "Planning", icon: Calendar, accent: ACCENTS.planning },
     { id: "todo", label: "À faire", icon: ListChecks, accent: ACCENTS.todo },
+    { id: "sport", label: "Sport", icon: Dumbbell, accent: ACCENTS.sport },
   ];
   const active = tabs.find((t) => t.id === tab);
 
@@ -443,12 +449,20 @@ export default function App() {
               recompenses={recompenses} setRecompenses={setRecompenses}
               menus={menus} menuIdees={menuIdees} setMenuIdees={setMenuIdees}
               parentPin={parentPin} setParentPin={setParentPin}
+              sanctions={sanctions} setSanctions={setSanctions}
               accent={ACCENTS.enfants}
             />
           ) : tab === "planning" ? (
             <PlanningTab planning={planning} setPlanning={setPlanning} accent={ACCENTS.planning} />
-          ) : (
+          ) : tab === "todo" ? (
             <TodoTab todos={todos} setTodos={setTodos} accent={ACCENTS.todo} />
+          ) : (
+            <SportTab
+              sportMembres={sportMembres} setSportMembres={setSportMembres}
+              mensurations={mensurations} setMensurations={setMensurations}
+              seancesSport={seancesSport} setSeancesSport={setSeancesSport}
+              accent={ACCENTS.sport}
+            />
           )}
         </div>
       </main>
@@ -1872,7 +1886,15 @@ function emojiTache(titre) {
   return TACHE_EMOJI_PAR_TITRE[titre] || "⭐";
 }
 
-function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRecompenses, menus, menuIdees, setMenuIdees, parentPin, setParentPin, accent }) {
+const SANCTIONS_DE_BASE = [
+  { motif: "Dispute / bagarre", emoji: "🥊", points: 10 },
+  { motif: "Chambre en bazar", emoji: "🧦", points: 5 },
+  { motif: "Salit la maison", emoji: "🫧", points: 5 },
+  { motif: "Répond (insolence)", emoji: "😤", points: 10 },
+  { motif: "Trop de temps sur le téléphone", emoji: "📱", points: 5 },
+];
+
+function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRecompenses, menus, menuIdees, setMenuIdees, parentPin, setParentPin, sanctions, setSanctions, accent }) {
   const [selectedId, setSelectedId] = useState(enfants[0]?.id || null);
   const [newPrenom, setNewPrenom] = useState("");
   const [tacheForm, setTacheForm] = useState({ titre: "", points: 5, rappelDate: "" });
@@ -1880,6 +1902,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   const [idee, setIdee] = useState("");
   const [ajustePoche, setAjustePoche] = useState("");
   const [ajustePoints, setAjustePoints] = useState("");
+  const [sanctionForm, setSanctionForm] = useState({ motif: "", points: 5 });
   const [jaugeForm, setJaugeForm] = useState({ label: "", cible: 50, recompense: 5 });
 
   // Verrou parent : déverrouillage valable pour la session en cours
@@ -1936,6 +1959,17 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
     if (!val || !enfant) return;
     updateEnfant({ bonPoints: Math.max(0, enfant.bonPoints + sens * val) });
     setAjustePoints("");
+  };
+
+  const sanctionsEnfant = sanctions.filter((s) => s.enfantId === selectedId).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const appliquerSanction = (motif, points) => {
+    if (!enfant || !motif.trim() || !points) return;
+    setSanctions((prev) => [{ id: uid(), enfantId: selectedId, motif: motif.trim(), points: Number(points), date: todayISO() }, ...prev]);
+    updateEnfant({ bonPoints: Math.max(0, enfant.bonPoints - Number(points)) });
+  };
+  const annulerSanction = (s) => {
+    setSanctions((prev) => prev.filter((x) => x.id !== s.id));
+    updateEnfant({ bonPoints: enfant.bonPoints + s.points });
   };
 
   const tachesEnfant = taches.filter((t) => t.enfantId === selectedId);
@@ -2043,6 +2077,35 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
         </div>
       </Card>
 
+      {enfants.length >= 2 && (
+        <Card>
+          <SectionTitle accent={accent}>🏆 Classement des bons points</SectionTitle>
+          <div className="flex flex-col gap-2">
+            {[...enfants].sort((a, b) => b.bonPoints - a.bonPoints).map((e, i, arr) => {
+              const titres = [
+                "👑 Le Boss du mois",
+                "🥈 Le Vice-Boss",
+                "🥉 La Terreur du classement",
+              ];
+              const estDernier = i === arr.length - 1 && arr.length > 3;
+              const titre = estDernier ? "🌱 Prêt·e à tout exploser le mois prochain" : (titres[i] || "⭐ Toujours dans la course");
+              return (
+                <div key={e.id} className="flex items-center justify-between px-3 py-2 rounded-md" style={{ background: i === 0 ? accent.soft : "transparent", border: `1px solid ${LINE}` }}>
+                  <div className="flex items-center gap-3">
+                    <span className="font-serif font-bold text-lg w-6 text-center" style={{ color: accent.deep }}>{i + 1}</span>
+                    <div>
+                      <p className="font-semibold">{e.prenom}</p>
+                      <p className="text-xs" style={{ color: INK_SOFT }}>{titre}</p>
+                    </div>
+                  </div>
+                  <span className="font-serif font-bold flex items-center gap-1" style={{ color: accent.deep }}><Star size={15} />{e.bonPoints}</span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
       {!enfant ? (
         <p className="text-sm" style={{ color: INK_SOFT }}>{modeParent ? "Ajoute un enfant pour créer son profil." : "Aucun profil pour l'instant."}</p>
       ) : (
@@ -2083,6 +2146,45 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
               )}
             </Card>
           </div>
+
+          {/* Comportement — pertes de points (parent uniquement) */}
+          {modeParent && (
+            <Card>
+              <SectionTitle accent={accent}>Comportement — retirer des points</SectionTitle>
+              <p className="text-xs mb-2" style={{ color: INK_SOFT }}>Clique sur un motif pour retirer directement les points correspondants.</p>
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {SANCTIONS_DE_BASE.map((s) => (
+                  <button key={s.motif} onClick={() => appliquerSanction(s.motif, s.points)}
+                    className="text-xs px-2.5 py-1 rounded-full font-semibold border flex items-center gap-1"
+                    style={{ borderColor: "#E3B3AC", color: "#A33B3B", background: "#FBEAE8" }}>
+                    <span>{s.emoji}</span> {s.motif} (−{s.points})
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2 items-end pt-2 border-t mb-3" style={{ borderColor: LINE }}>
+                <Field label="Motif personnalisé">
+                  <input className={inputCls} style={{ borderColor: LINE }} value={sanctionForm.motif} onChange={(e) => setSanctionForm({ ...sanctionForm, motif: e.target.value })} placeholder="Autre motif..." />
+                </Field>
+                <Field label="Points à retirer">
+                  <input type="number" className={inputCls + " w-20"} style={{ borderColor: LINE }} value={sanctionForm.points} onChange={(e) => setSanctionForm({ ...sanctionForm, points: e.target.value })} />
+                </Field>
+                <button onClick={() => { appliquerSanction(sanctionForm.motif, sanctionForm.points); setSanctionForm({ motif: "", points: 5 }); }} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: "#A33B3B" }}><Minus size={15} />Retirer</button>
+              </div>
+              {!!sanctionsEnfant.length && (
+                <div className="flex flex-col gap-1 max-h-40 overflow-auto pt-2 border-t" style={{ borderColor: LINE }}>
+                  {sanctionsEnfant.map((s) => (
+                    <div key={s.id} className="flex items-center justify-between text-sm py-1">
+                      <span>{s.motif} <span className="text-xs" style={{ color: INK_SOFT }}>· {formatDateFR(s.date)}</span></span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold" style={{ color: "#A33B3B" }}>−{s.points}</span>
+                        <button onClick={() => annulerSanction(s)} className="text-xs underline" style={{ color: INK_SOFT }}>annuler</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
 
           {/* Jauge argent de poche */}
           <Card>
@@ -2345,6 +2447,287 @@ function PlanningTab({ planning, setPlanning, accent }) {
       <p className="text-xs" style={{ color: INK_SOFT }}>
         Le bouton « Google Agenda » ouvre l'évènement pré-rempli dans Google Calendar en un clic (une vraie synchronisation automatique à double sens n'est pas possible depuis cette appli).
       </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* SPORT — mensurations + séances avec catalogue d'exercices           */
+/* ------------------------------------------------------------------ */
+const DUREES_SPORT = [5, 10, 20, 30, 40, 50, 60, 90, 120];
+function labelDuree(min) {
+  if (min < 60) return `${min} min`;
+  if (min === 60) return "1h";
+  if (min === 90) return "1h30";
+  return `${Math.floor(min / 60)}h${min % 60 ? min % 60 : ""}`;
+}
+const DIFFICULTES_SPORT = [
+  { key: "facile", label: "Facile", mult: 1 },
+  { key: "moyen", label: "Moyen", mult: 1.5 },
+  { key: "difficile", label: "Difficile", mult: 2 },
+];
+const CATEGORIES_SPORT = {
+  musculation: {
+    label: "Musculation", icon: Dumbbell,
+    exercices: [
+      { nom: "Soulevé de terre", conseil: "Dos plat, la barre frôle les tibias, pousse le sol avec les jambes en te redressant." },
+      { nom: "Développé militaire", conseil: "Gainage serré, pousse la charge à la verticale sans cambrer le bas du dos." },
+      { nom: "Pompes explosives (clap)", conseil: "Pousse fort pour décoller les mains du sol, amortis en souplesse à la réception." },
+      { nom: "Tractions lestées", conseil: "Ajoute du poids (sac, gilet), monte jusqu'au menton, descente contrôlée." },
+      { nom: "Fentes bulgares", conseil: "Pied arrière surélevé, descends jusqu'à 90° au genou avant, garde le buste droit." },
+      { nom: "Hip thrust", conseil: "Épaules sur banc, pousse par les talons, serre les fessiers en haut du mouvement." },
+      { nom: "Gainage dynamique (mountain climbers)", conseil: "Hanches basses et stables, genoux qui viennent vite vers la poitrine." },
+      { nom: "Squats bulgares sautés", conseil: "Explose vers le haut à chaque répétition, atterris en souplesse, genou aligné." },
+    ],
+  },
+  basket: {
+    label: "Technique basket (avancé)", icon: Activity,
+    exercices: [
+      { nom: "Combo crossover + hésitation", conseil: "Change de rythme franchement, vends le move avec les épaules avant l'accélération." },
+      { nom: "Euro step en pénétration", conseil: "Deux appuis décalés pour éviter le contact, protège le ballon loin du défenseur." },
+      { nom: "Step-back jumper", conseil: "Pousse fort vers l'arrière pour créer l'écart, réceptionne équilibré·e avant de tirer." },
+      { nom: "Pull-up jumper en transition", conseil: "Contrôle ta vitesse avant le tir, deux appuis rapides et stables." },
+      { nom: "Jeu dos au panier (post moves)", conseil: "Sens la position du défenseur avec le dos, enchaîne feinte puis finition." },
+      { nom: "Catch and shoot sous contrainte de temps", conseil: "Prépare tes appuis avant la réception, dégaine en moins d'une seconde." },
+      { nom: "Finitions contre contact (through contact)", conseil: "Absorbe le contact avec le corps, protège le ballon des deux mains jusqu'au tir." },
+      { nom: "Dribbles combinés (in-and-out, behind the back)", conseil: "Enchaîne sans ralentir, garde le regard relevé sur le terrain." },
+    ],
+  },
+  endurance: {
+    label: "Endurance / Fractionné", icon: Wind,
+    exercices: [
+      { nom: "Course à pied", conseil: "Respiration régulière, foulée courte, allure qu'on peut tenir en discutant." },
+      { nom: "Corde à sauter", conseil: "Petits sauts, ce sont les poignets qui tournent la corde, pas les bras." },
+      { nom: "Sprints fractionnés (30/30)", conseil: "30s à fond / 30s de récupération, répète en gardant la même intensité." },
+      { nom: "Navettes (suicides)", conseil: "Accélère fort sur chaque ligne, touche le sol avec la main avant de repartir." },
+      { nom: "Vélo", conseil: "Cadence régulière, dos droit." },
+    ],
+  },
+  detente: {
+    label: "Détente / Explosivité (sauts)", icon: Zap,
+    exercices: [
+      { nom: "Squats sautés", conseil: "Descends en squat puis explose verticalement, atterris en souplesse genoux fléchis." },
+      { nom: "Box jumps", conseil: "Élan des bras pour t'aider à monter, réceptionne les deux pieds bien à plat sur la box." },
+      { nom: "Fentes sautées (jump lunges)", conseil: "Change de jambe en l'air à chaque saut, garde le buste droit." },
+      { nom: "Sauts latéraux (bounds)", conseil: "Pousse fort sur un pied vers le côté, stabilise-toi une seconde avant de repartir." },
+      { nom: "Sauts en profondeur (depth jumps)", conseil: "Descends d'une petite hauteur, réceptionne puis rebondis immédiatement le plus haut possible." },
+      { nom: "Double-unders (corde à sauter rapide)", conseil: "Fais tourner la corde deux fois par saut, poignets rapides, sauts petits et hauts." },
+    ],
+  },
+};
+
+function SportTab({ sportMembres, setSportMembres, mensurations, setMensurations, seancesSport, setSeancesSport, accent }) {
+  const [selectedId, setSelectedId] = useState(sportMembres[0]?.id || null);
+  const [newNom, setNewNom] = useState("");
+  const [mensuForm, setMensuForm] = useState({ taille: "", poids: "" });
+  const [catOuverte, setCatOuverte] = useState("musculation");
+  const [seanceForm, setSeanceForm] = useState({ exercice: CATEGORIES_SPORT.musculation.exercices[0].nom, dureeMin: 20, difficulte: "moyen" });
+  const [dernierGain, setDernierGain] = useState(null);
+
+  useEffect(() => {
+    if (!selectedId && sportMembres.length) setSelectedId(sportMembres[0].id);
+  }, [sportMembres]);
+
+  const membre = sportMembres.find((m) => m.id === selectedId);
+
+  const addMembre = () => {
+    if (!newNom.trim()) return;
+    const m = { id: uid(), nom: newNom.trim() };
+    setSportMembres((prev) => [...prev, m]);
+    setSelectedId(m.id);
+    setNewNom("");
+  };
+  const removeMembre = (id) => {
+    setSportMembres((prev) => prev.filter((m) => m.id !== id));
+    setMensurations((prev) => prev.filter((m) => m.membreId !== id));
+    setSeancesSport((prev) => prev.filter((s) => s.membreId !== id));
+    if (selectedId === id) setSelectedId(null);
+  };
+
+  const mensurationsMembre = mensurations.filter((m) => m.membreId === selectedId).sort((a, b) => (a.date > b.date ? 1 : -1));
+  const addMensuration = () => {
+    if (!mensuForm.taille && !mensuForm.poids) return;
+    setMensurations((prev) => [...prev, {
+      id: uid(), membreId: selectedId, date: todayISO(),
+      taille: mensuForm.taille ? Number(mensuForm.taille) : null,
+      poids: mensuForm.poids ? Number(mensuForm.poids) : null,
+    }]);
+    setMensuForm({ taille: "", poids: "" });
+  };
+  const removeMensuration = (id) => setMensurations((prev) => prev.filter((m) => m.id !== id));
+
+  const seancesMembre = seancesSport.filter((s) => s.membreId === selectedId).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const totalPointsMembre = (id) => seancesSport.filter((s) => s.membreId === id).reduce((sum, s) => sum + s.points, 0);
+
+  const enregistrerSeance = () => {
+    if (!membre) return;
+    const diff = DIFFICULTES_SPORT.find((d) => d.key === seanceForm.difficulte);
+    const points = Math.round(Number(seanceForm.dureeMin) * diff.mult);
+    setSeancesSport((prev) => [{
+      id: uid(), membreId: selectedId, date: todayISO(),
+      categorie: CATEGORIES_SPORT[catOuverte].label, exercice: seanceForm.exercice,
+      dureeMin: Number(seanceForm.dureeMin), difficulte: diff.label, points,
+    }, ...prev]);
+    setDernierGain(points);
+    setTimeout(() => setDernierGain(null), 3000);
+  };
+  const removeSeance = (id) => setSeancesSport((prev) => prev.filter((s) => s.id !== id));
+
+  return (
+    <div className="flex flex-col gap-6 max-w-4xl">
+      <Card>
+        <div className="flex flex-wrap items-center gap-2">
+          {sportMembres.map((m) => (
+            <button key={m.id} onClick={() => setSelectedId(m.id)}
+              className="px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5"
+              style={{ background: selectedId === m.id ? accent.main : accent.soft, color: selectedId === m.id ? "#fff" : accent.deep }}>
+              {m.nom}
+            </button>
+          ))}
+          <input className={inputCls + " w-32"} style={{ borderColor: LINE }} placeholder="Prénom" value={newNom} onChange={(e) => setNewNom(e.target.value)} />
+          <button onClick={addMembre} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter</button>
+        </div>
+      </Card>
+
+      {sportMembres.length >= 2 && (
+        <Card>
+          <SectionTitle accent={accent}>🏆 Classement sportif de la famille</SectionTitle>
+          <div className="flex flex-col gap-2">
+            {[...sportMembres].sort((a, b) => totalPointsMembre(b.id) - totalPointsMembre(a.id)).map((m, i) => {
+              const titres = ["🔥 Athlète du mois", "🥈 Sacrément en forme", "🥉 Toujours motivé·e"];
+              return (
+                <div key={m.id} className="flex items-center justify-between px-3 py-2 rounded-md" style={{ background: i === 0 ? accent.soft : "transparent", border: `1px solid ${LINE}` }}>
+                  <div className="flex items-center gap-3">
+                    <span className="font-serif font-bold text-lg w-6 text-center" style={{ color: accent.deep }}>{i + 1}</span>
+                    <div>
+                      <p className="font-semibold">{m.nom}</p>
+                      <p className="text-xs" style={{ color: INK_SOFT }}>{titres[i] || "⭐ En pleine progression"}</p>
+                    </div>
+                  </div>
+                  <span className="font-serif font-bold flex items-center gap-1" style={{ color: accent.deep }}><Trophy size={15} />{totalPointsMembre(m.id)} pts</span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {!membre ? (
+        <p className="text-sm" style={{ color: INK_SOFT }}>Ajoute un membre de la famille pour commencer son suivi.</p>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xl font-serif font-semibold">{membre.nom}</h3>
+            <button onClick={() => removeMembre(membre.id)} className="text-xs px-2.5 py-1 rounded-md border font-semibold flex items-center gap-1" style={{ borderColor: LINE, color: INK_SOFT }}><Trash2 size={13} />Supprimer ce profil</button>
+          </div>
+
+          {/* Taille / poids */}
+          <Card>
+            <SectionTitle accent={accent}><Ruler size={14} className="inline mr-1" />Taille &amp; poids</SectionTitle>
+            {mensurationsMembre.length > 1 && (
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={mensurationsMembre.map((m) => ({ date: formatDateFR(m.date).slice(0, 12), poids: m.poids, taille: m.taille }))}>
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="poids" stroke={accent.main} name="Poids (kg)" strokeWidth={2} />
+                  <Line type="monotone" dataKey="taille" stroke={accent.deep} name="Taille (cm)" strokeWidth={2} strokeDasharray="4 3" />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+            <div className="flex flex-col gap-1 my-3 max-h-32 overflow-auto">
+              {mensurationsMembre.slice().reverse().map((m) => (
+                <div key={m.id} className="flex items-center justify-between text-sm py-1 border-b" style={{ borderColor: LINE }}>
+                  <span>{formatDateFR(m.date)}</span>
+                  <div className="flex items-center gap-3">
+                    {m.taille && <span>{m.taille} cm</span>}
+                    {m.poids && <span>{m.poids} kg</span>}
+                    <button onClick={() => removeMensuration(m.id)} className="opacity-40 hover:opacity-100"><Trash2 size={13} /></button>
+                  </div>
+                </div>
+              ))}
+              {!mensurationsMembre.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucune mesure enregistrée.</p>}
+            </div>
+            <div className="flex flex-wrap gap-2 items-end pt-2 border-t" style={{ borderColor: LINE }}>
+              <Field label="Taille (cm)">
+                <input type="number" className={inputCls + " w-24"} style={{ borderColor: LINE }} value={mensuForm.taille} onChange={(e) => setMensuForm({ ...mensuForm, taille: e.target.value })} />
+              </Field>
+              <Field label="Poids (kg)">
+                <input type="number" step="0.1" className={inputCls + " w-24"} style={{ borderColor: LINE }} value={mensuForm.poids} onChange={(e) => setMensuForm({ ...mensuForm, poids: e.target.value })} />
+              </Field>
+              <button onClick={addMensuration} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter (aujourd'hui)</button>
+            </div>
+          </Card>
+
+          {/* Catalogue d'exercices + log de séance */}
+          <Card>
+            <SectionTitle accent={accent}>S'entraîner</SectionTitle>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {Object.entries(CATEGORIES_SPORT).map(([key, cat]) => {
+                const Icon = cat.icon;
+                return (
+                  <button key={key} onClick={() => { setCatOuverte(key); setSeanceForm({ ...seanceForm, exercice: cat.exercices[0].nom }); }}
+                    className="text-xs px-2.5 py-1.5 rounded-full font-semibold flex items-center gap-1"
+                    style={{ background: catOuverte === key ? accent.main : accent.soft, color: catOuverte === key ? "#fff" : accent.deep }}>
+                    <Icon size={13} />{cat.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col gap-1.5 mb-3">
+              {CATEGORIES_SPORT[catOuverte].exercices.map((ex) => (
+                <label key={ex.nom} className="flex items-start gap-2 px-2.5 py-2 rounded-md cursor-pointer" style={{ background: seanceForm.exercice === ex.nom ? accent.soft : "transparent", border: `1px solid ${LINE}` }}>
+                  <input type="radio" name="exercice" checked={seanceForm.exercice === ex.nom} onChange={() => setSeanceForm({ ...seanceForm, exercice: ex.nom })} className="mt-1" />
+                  <div>
+                    <p className="text-sm font-medium">{ex.nom}</p>
+                    <p className="text-xs" style={{ color: INK_SOFT }}>{ex.conseil}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-2 items-end pt-2 border-t" style={{ borderColor: LINE }}>
+              <Field label="Durée">
+                <select className={inputCls} style={{ borderColor: LINE }} value={seanceForm.dureeMin} onChange={(e) => setSeanceForm({ ...seanceForm, dureeMin: Number(e.target.value) })}>
+                  {DUREES_SPORT.map((d) => <option key={d} value={d}>{labelDuree(d)}</option>)}
+                </select>
+              </Field>
+              <Field label="Difficulté">
+                <select className={inputCls} style={{ borderColor: LINE }} value={seanceForm.difficulte} onChange={(e) => setSeanceForm({ ...seanceForm, difficulte: e.target.value })}>
+                  {DIFFICULTES_SPORT.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+                </select>
+              </Field>
+              <button onClick={enregistrerSeance} className="h-9 px-4 rounded-md text-sm font-semibold text-white flex items-center gap-1.5" style={{ background: accent.main }}><Flame size={15} />Valider la séance</button>
+              {dernierGain !== null && <span className="text-sm font-semibold" style={{ color: accent.deep }}>+{dernierGain} points ! 🎉</span>}
+            </div>
+          </Card>
+
+          {/* Historique des séances */}
+          <Card>
+            <div className="flex items-center justify-between mb-3">
+              <SectionTitle accent={accent}>Historique des séances</SectionTitle>
+              <span className="text-sm font-semibold flex items-center gap-1" style={{ color: accent.deep }}><Trophy size={14} />{totalPointsMembre(selectedId)} pts au total</span>
+            </div>
+            <div className="flex flex-col gap-1.5 max-h-72 overflow-auto">
+              {seancesMembre.map((s) => (
+                <div key={s.id} className="flex items-center justify-between text-sm py-1.5 border-b" style={{ borderColor: LINE }}>
+                  <div>
+                    <p className="font-medium">{s.exercice}</p>
+                    <p className="text-xs" style={{ color: INK_SOFT }}>{s.categorie} · {labelDuree(s.dureeMin)} · {s.difficulte} · {formatDateFR(s.date)}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold" style={{ color: accent.deep }}>+{s.points} pts</span>
+                    <button onClick={() => removeSeance(s.id)} className="opacity-40 hover:opacity-100"><Trash2 size={13} /></button>
+                  </div>
+                </div>
+              ))}
+              {!seancesMembre.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucune séance enregistrée pour l'instant.</p>}
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
