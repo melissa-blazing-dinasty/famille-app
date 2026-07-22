@@ -192,6 +192,10 @@ function useNotifierDuJour(taches, planning) {
 /* ------------------------------------------------------------------ */
 /* Écran d'entrée : code famille (partagé entre tous les appareils)    */
 /* ------------------------------------------------------------------ */
+function normaliserCode(c) {
+  return c.replace(/\s+/g, "");
+}
+
 function FamilyCodeGate({ onValidate }) {
   const [code, setCode] = useState("");
   return (
@@ -207,11 +211,15 @@ function FamilyCodeGate({ onValidate }) {
           style={{ borderColor: LINE }}
           placeholder="Ex. dupont-maison-2026"
           value={code}
+          autoCapitalize="none"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck="false"
           onChange={(e) => setCode(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && code.trim()) onValidate(code.trim().toLowerCase()); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && normaliserCode(code)) onValidate(normaliserCode(code)); }}
         />
         <button
-          onClick={() => code.trim() && onValidate(code.trim().toLowerCase())}
+          onClick={() => normaliserCode(code) && onValidate(normaliserCode(code))}
           className="w-full h-10 rounded-md text-sm font-semibold text-white"
           style={{ background: ACCENTS.budget.main }}
         >
@@ -360,7 +368,15 @@ export default function App() {
         <header className="px-5 sm:px-8 py-5 border-b flex items-start justify-between gap-3" style={{ borderColor: LINE, background: PAPER_DARK }}>
           <div>
             <p className="text-[11px] uppercase tracking-[0.2em] font-semibold" style={{ color: active.accent.main }}>
-              Carnet de famille · <span className="normal-case tracking-normal font-mono" style={{ color: INK_SOFT }}>code : {familyCode}</span>
+              Carnet de famille · <span className="normal-case tracking-normal font-mono" style={{ color: INK_SOFT }}>code : {familyCode} ({familyCode.length} car.)</span>
+              {" "}
+              <button
+                onClick={() => { if (window.confirm("Changer de code famille ? Tu devras retaper le bon code pour retrouver tes données.")) { localStorage.removeItem("familyCode"); window.location.reload(); } }}
+                className="normal-case tracking-normal underline"
+                style={{ color: INK_SOFT }}
+              >
+                (changer)
+              </button>
             </p>
             <h1 className="text-2xl sm:text-3xl font-serif font-semibold mt-0.5" style={{ color: INK }}>{active.label}</h1>
           </div>
@@ -704,6 +720,7 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
 
   // --- Suivi avancé (basé sur le fichier Excel d'origine) ---
   const [quotForm, setQuotForm] = useState({ categorie: "", prevu: "" });
+  const [depenseRapide, setDepenseRapide] = useState({});
   const [courseForm, setCourseForm] = useState({ achat: "", montant: "" });
   const [extraForm, setExtraForm] = useState({ poste: "", montant: "", type: "extra" });
 
@@ -777,12 +794,14 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
   const soldeCompte = (nomCompte) => {
     const c = comptes.find((c) => c.nom === nomCompte);
     const base = c ? Number(c.solde) || 0 : 0;
+    const today = todayISO();
     const delta = transactions
-      .filter((t) => t.compte === nomCompte)
+      .filter((t) => t.compte === nomCompte && t.date <= today) // une transaction datée dans le futur ne compte pas encore
       .reduce((s, t) => s + (t.type === "revenu" ? Number(t.montant) : -Number(t.montant)), 0);
     return base + delta;
   };
   const soldeTotal = comptes.reduce((s, c) => s + soldeCompte(c.nom), 0);
+  const transactionsFutures = transactions.filter((t) => t.date > todayISO());
 
   const addCompte = () => {
     if (!newCompte.trim()) return;
@@ -825,6 +844,16 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
   };
   const removeQuot = (id) => setBudgetQuotidien((prev) => prev.filter((q) => q.id !== id));
   const setPrevuQuot = (id, prevu) => setBudgetQuotidien((prev) => prev.map((q) => (q.id === id ? { ...q, prevu: Number(prevu) || 0 } : q)));
+  const ajouterDepenseRapide = (q) => {
+    const montant = Number(depenseRapide[q.id] || 0);
+    if (!montant) return;
+    setTransactions((prev) => [{
+      id: uid(), date: todayISO(), compte: comptes[0]?.nom || "", categorie: q.categorie,
+      type: "depense", montant, description: "",
+    }, ...prev]);
+    setDepenseRapide({ ...depenseRapide, [q.id]: "" });
+  };
+
   const reelParCategorieMapBrute = Object.fromEntries(parCategorie);
   // Les courses saisies dans "Suivi courses" comptent comme du réel pour la catégorie Alimentation
   const totalCoursesAnticipe = courses.reduce((s, c) => s + c.montant, 0);
@@ -862,15 +891,20 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
   const totalImprevus = extrasImprevus.filter((e) => e.type === "imprevu").reduce((s, e) => s + e.montant, 0);
 
   // --- Vue d'ensemble (mêmes formules que le fichier Excel d'origine) ---
-  const totalRentrees = baseMensuelle.filter((l) => l.type === "revenu").reduce((s, l) => s + l.montant, 0);
+  const revenusTransactionsCeMoisVE = monthTx.filter((t) => t.type === "revenu").reduce((s, t) => s + Number(t.montant), 0);
+  const totalRentrees = baseMensuelle.filter((l) => l.type === "revenu").reduce((s, l) => s + l.montant, 0) + revenusTransactionsCeMoisVE;
   const totalDepensesFixes = baseMensuelle.filter((l) => l.type === "depense").reduce((s, l) => s + l.montant, 0);
   const resteTheorique = totalRentrees - totalDepensesFixes - totalQuotidienPrevu;
   const resteReelApresDecouvert = resteTheorique - (decouvert.rembourseCeMois || 0);
   const resteDisponibleGlobal = resteReelApresDecouvert - totalExtras - totalImprevus;
-  // Où j'en suis VRAIMENT à ce jour : seulement ce qui est coché comme reçu/prélevé + les dépenses réellement engagées (courses, extras)
+  // Où j'en suis VRAIMENT à ce jour : ce qui est coché comme reçu/prélevé
+  // (Base mensuelle) + TOUTES les transactions ponctuelles du mois
+  // (revenus et dépenses saisis dans "Nouvelle transaction") + courses/extras/imprévus.
   const totalRevenusEncaisses = baseMensuelle.filter((l) => l.type === "revenu" && l.fait).reduce((s, l) => s + l.montant, 0);
   const totalDepensesPreleveesGlobal = baseMensuelle.filter((l) => l.type === "depense" && l.fait).reduce((s, l) => s + l.montant, 0);
-  const soldeReelAJour = totalRevenusEncaisses - totalDepensesPreleveesGlobal - totalCourses - totalExtras - totalImprevus;
+  const revenusTransactionsCeMois = monthTx.filter((t) => t.type === "revenu").reduce((s, t) => s + Number(t.montant), 0);
+  const depensesTransactionsCeMois = monthTx.filter((t) => t.type === "depense").reduce((s, t) => s + Number(t.montant), 0);
+  const soldeReelAJour = (totalRevenusEncaisses + revenusTransactionsCeMois) - (totalDepensesPreleveesGlobal + depensesTransactionsCeMois) - totalCourses - totalExtras - totalImprevus;
 
   const handleCSV = (e) => {
     const file = e.target.files[0];
@@ -921,6 +955,11 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
         <div>
           <p className="text-xs uppercase tracking-wide font-semibold" style={{ color: accent.deep }}>Solde total</p>
           <p className="text-3xl font-serif font-bold" style={{ color: accent.deep }}>{formatEUR(soldeTotal)}</p>
+          {!!transactionsFutures.length && (
+            <p className="text-[11px] mt-1" style={{ color: INK_SOFT }}>
+              {transactionsFutures.length} transaction{transactionsFutures.length > 1 ? "s" : ""} datée{transactionsFutures.length > 1 ? "s" : ""} dans le futur, pas encore comptée{transactionsFutures.length > 1 ? "s" : ""} ici
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-4">
           {comptes.map((c) => (
@@ -934,7 +973,16 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
 
       {/* Vue d'ensemble */}
       <div className="rounded-lg p-5" style={{ background: accent.soft }}>
-        <p className="text-xs uppercase tracking-wide font-semibold mb-2" style={{ color: accent.deep }}>Vue d'ensemble du mois</p>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <p className="text-xs uppercase tracking-wide font-semibold" style={{ color: accent.deep }}>Vue d'ensemble du mois</p>
+          <label className="text-xs flex items-center gap-1.5" style={{ color: INK_SOFT }}>
+            Mois analysé :
+            <input type="month" className="border rounded-md px-2 py-1 bg-white text-xs" style={{ borderColor: LINE }} value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} />
+          </label>
+        </div>
+        <p className="text-[11px] mb-2" style={{ color: INK_SOFT }}>
+          "Rentrées" et "Où j'en suis vraiment" ne comptent que les transactions dont la date tombe dans ce mois-là — si une transaction n'apparaît pas, vérifie sa date.
+        </p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
           <div><p style={{ color: INK_SOFT }}>Rentrées</p><p className="font-serif font-bold text-lg">{formatEUR(totalRentrees)}</p></div>
           <div><p style={{ color: INK_SOFT }}>Dépenses fixes</p><p className="font-serif font-bold text-lg">{formatEUR(totalDepensesFixes)}</p></div>
@@ -1087,6 +1135,9 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
         {/* Le Quotidien : budget prévu vs réel */}
         <Card>
           <SectionTitle accent={accent}>Le Quotidien — prévu vs réel</SectionTitle>
+          <p className="text-xs mb-3" style={{ color: INK_SOFT }}>
+            Le "réel" se remplit soit via "Courses" ci-dessous (pour Alimentation), soit directement ici avec le "+" sur chaque ligne.
+          </p>
           <div className="flex flex-col gap-2 mb-3">
             {budgetQuotidien.map((q) => {
               const reel = reelParCategorieMap[q.categorie] || 0;
@@ -1110,7 +1161,25 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
                     </div>
                   </div>
                   <div className="h-2 rounded-full bg-black/5"><div className="h-2 rounded-full" style={{ width: `${Math.min(100, (reel / (q.prevu || 1)) * 100)}%`, background: reste < 0 ? "#A33B3B" : accent.main }} /></div>
-                  <p className="text-xs mt-0.5" style={{ color: reste < 0 ? "#A33B3B" : INK_SOFT }}>reste {formatEUR(reste)}</p>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <p style={{ color: reste < 0 ? "#A33B3B" : INK_SOFT }}>reste {formatEUR(reste)}</p>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number" step="0.01" placeholder="Montant dépensé"
+                        value={depenseRapide[q.id] || ""}
+                        onChange={(e) => setDepenseRapide({ ...depenseRapide, [q.id]: e.target.value })}
+                        className="w-24 text-right border rounded px-1.5 py-0.5 bg-white text-xs"
+                        style={{ borderColor: LINE }}
+                      />
+                      <button
+                        onClick={() => ajouterDepenseRapide(q)}
+                        className="text-xs px-2 py-0.5 rounded-md font-semibold text-white flex items-center gap-0.5"
+                        style={{ background: accent.main }}
+                      >
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               );
             })}
