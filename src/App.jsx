@@ -34,7 +34,13 @@ const TYPES_PLAT = ["Entrée", "Plat", "Dessert", "Goûter"];
 const JOURS_FR = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+function todayISO() {
+  const d = new Date();
+  const annee = d.getFullYear();
+  const mois = String(d.getMonth() + 1).padStart(2, "0");
+  const jour = String(d.getDate()).padStart(2, "0");
+  return `${annee}-${mois}-${jour}`;
+}
 function formatEUR(n) {
   const v = Number(n) || 0;
   return v.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
@@ -480,20 +486,40 @@ const CHECKED_BLUE = "#DCEBFA";
 const CHECKED_BLUE_TEXT = "#2C5F8A";
 
 function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent }) {
-  const [form, setForm] = useState({ libelle: "", type: "depense", montant: "", compte: "", date: "" });
+  const [form, setForm] = useState({ libelle: "", type: "depense", montant: "", compte: "", jourMois: "" });
 
   useEffect(() => {
     if (!form.compte && comptes.length) setForm((f) => ({ ...f, compte: comptes[0].nom }));
   }, [comptes]);
 
+  const jourAujourdhui = new Date().getDate();
+
+  // Coche automatiquement toute ligne dont le jour de prélèvement est déjà
+  // passé ce mois-ci (et qui n'est pas encore cochée) — à chaque ouverture
+  // de l'appli, on "rattrape" les jours qui ont pu s'écouler entre-temps.
+  useEffect(() => {
+    setBaseMensuelle((prev) => {
+      let changed = false;
+      const next = prev.map((l) => {
+        if (!l.fait && l.jourMois && Number(l.jourMois) <= jourAujourdhui) {
+          changed = true;
+          return { ...l, fait: true };
+        }
+        return l;
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const addLigne = () => {
     if (!form.libelle.trim() || !form.montant) return;
     setBaseMensuelle((prev) => [...prev, { id: uid(), ...form, montant: Number(form.montant), fait: false }]);
-    setForm({ ...form, libelle: "", montant: "", date: "" });
+    setForm({ ...form, libelle: "", montant: "", jourMois: "" });
   };
   const removeLigne = (id) => setBaseMensuelle((prev) => prev.filter((l) => l.id !== id));
   const toggleLigne = (id) => setBaseMensuelle((prev) => prev.map((l) => (l.id === id ? { ...l, fait: !l.fait } : l)));
-  const setDateLigne = (id, date) => setBaseMensuelle((prev) => prev.map((l) => (l.id === id ? { ...l, date } : l)));
+  const setJourMoisLigne = (id, jourMois) => setBaseMensuelle((prev) => prev.map((l) => (l.id === id ? { ...l, jourMois: jourMois ? Number(jourMois) : "" } : l)));
   const setMontantLigne = (id, montant) => setBaseMensuelle((prev) => prev.map((l) => (l.id === id ? { ...l, montant: Number(montant) || 0 } : l)));
   const resetTout = () => setBaseMensuelle((prev) => prev.map((l) => ({ ...l, fait: false })));
 
@@ -502,7 +528,6 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
   // "Réel à ce jour" : seulement ce qui est vraiment coché comme fait
   const totalRevenusEncaisses = baseMensuelle.filter((l) => l.type === "revenu" && l.fait).reduce((s, l) => s + l.montant, 0);
   const totalDepensesPrelevees = baseMensuelle.filter((l) => l.type === "depense" && l.fait).reduce((s, l) => s + l.montant, 0);
-  const today = todayISO();
 
   const [ouvert, setOuvert] = useState(false);
 
@@ -528,7 +553,7 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
         </button>
       </div>
       <p className="text-xs mb-3" style={{ color: INK_SOFT }}>
-        Ta base récurrente : loyer, crédits, abonnements, salaires... Coche une ligne (et note la date si tu veux) dès qu'elle est prélevée ou que l'argent est arrivé — la ligne passe en bleu clair, et ça alimente le "solde réel à ce jour" en bas.
+        Ta base récurrente : loyer, crédits, abonnements, salaires... Indique le jour du mois où chaque ligne tombe (ex. 5 pour le 5 de chaque mois) — l'appli coche automatiquement dès que ce jour est passé. Tu peux aussi cocher/décocher toi-même à tout moment.
       </p>
 
       <div className="flex flex-col gap-1 mb-3">
@@ -537,12 +562,12 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
           <span className="w-5"></span>
           <span>Libellé</span>
           <span>Compte</span>
-          <span>Date</span>
+          <span>Jour</span>
           <span className="text-right">Montant</span>
           <span></span>
         </div>
         {baseMensuelle.map((l) => {
-          const enRetard = l.date && l.date < today && !l.fait;
+          const enRetard = l.jourMois && Number(l.jourMois) < jourAujourdhui && !l.fait;
           return (
             <div key={l.id}
               className="grid grid-cols-[auto_1fr_auto_auto_auto_auto] gap-2 items-center px-2 py-2 rounded-md text-sm transition-colors"
@@ -553,8 +578,11 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
                 {enRetard && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F3D6D6", color: "#A33B3B" }}>en retard</span>}
               </span>
               <span className="text-xs" style={{ color: l.fait ? CHECKED_BLUE_TEXT : INK_SOFT }}>{l.compte || "—"}</span>
-              <input type="date" value={l.date || ""} onChange={(e) => setDateLigne(l.id, e.target.value)}
-                className="text-xs border rounded px-1 py-0.5" style={{ borderColor: LINE, background: l.fait ? "#fff" : "transparent" }} />
+              <label className="flex items-center gap-1 text-xs" style={{ color: l.fait ? CHECKED_BLUE_TEXT : INK_SOFT }}>
+                le
+                <input type="number" min="1" max="31" placeholder="j" value={l.jourMois || ""} onChange={(e) => setJourMoisLigne(l.id, e.target.value)}
+                  className="w-12 text-center border rounded px-1 py-0.5" style={{ borderColor: LINE, background: l.fait ? "#fff" : "transparent" }} />
+              </label>
               <span className="flex items-center gap-1 justify-end" style={{ color: l.fait ? CHECKED_BLUE_TEXT : (l.type === "revenu" ? accent.deep : "#A33B3B") }}>
                 {l.type === "revenu" ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
                 <input
@@ -588,8 +616,8 @@ function BaseMensuelleCard({ baseMensuelle, setBaseMensuelle, comptes, accent })
             {comptes.map((c) => <option key={c.id} value={c.nom}>{c.nom}</option>)}
           </select>
         </Field>
-        <Field label="Date prévue">
-          <input type="date" className={inputCls} style={{ borderColor: LINE }} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+        <Field label="Jour du prélèvement (1-31)">
+          <input type="number" min="1" max="31" className={inputCls + " w-20"} style={{ borderColor: LINE }} value={form.jourMois} onChange={(e) => setForm({ ...form, jourMois: e.target.value })} placeholder="ex. 5" />
         </Field>
         <Field label="Montant (€)">
           <input type="number" step="0.01" className={inputCls + " w-28"} style={{ borderColor: LINE }} value={form.montant} onChange={(e) => setForm({ ...form, montant: e.target.value })} />
@@ -714,7 +742,7 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
 
   const [newCompte, setNewCompte] = useState("");
   const [newSolde, setNewSolde] = useState("0");
-  const [form, setForm] = useState({ date: todayISO(), compte: "", categorie: categories[0] || "", type: "depense", montant: "", description: "" });
+  const [form, setForm] = useState({ date: todayISO(), compte: "", categorie: categories[0] || "", type: "depense", montant: "", description: "", interne: false, realisee: true });
   const [newCat, setNewCat] = useState("");
   const [monthFilter, setMonthFilter] = useState(todayISO().slice(0, 7));
 
@@ -794,14 +822,14 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
   const soldeCompte = (nomCompte) => {
     const c = comptes.find((c) => c.nom === nomCompte);
     const base = c ? Number(c.solde) || 0 : 0;
-    const today = todayISO();
     const delta = transactions
-      .filter((t) => t.compte === nomCompte && t.date <= today) // une transaction datée dans le futur ne compte pas encore
+      .filter((t) => t.compte === nomCompte && t.realisee !== false) // ne compte que si coché comme "réalisée"
       .reduce((s, t) => s + (t.type === "revenu" ? Number(t.montant) : -Number(t.montant)), 0);
     return base + delta;
   };
   const soldeTotal = comptes.reduce((s, c) => s + soldeCompte(c.nom), 0);
-  const transactionsFutures = transactions.filter((t) => t.date > todayISO());
+  const transactionsNonRealisees = transactions.filter((t) => t.realisee === false);
+  const toggleRealisee = (id) => setTransactions((prev) => prev.map((t) => (t.id === id ? { ...t, realisee: t.realisee === false } : t)));
 
   const addCompte = () => {
     if (!newCompte.trim()) return;
@@ -828,7 +856,7 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
     setNewCat("");
   };
 
-  const monthTx = transactions.filter((t) => t.date.slice(0, 7) === monthFilter);
+  const monthTx = transactions.filter((t) => t.date.slice(0, 7) === monthFilter && !t.interne);
   const parCategorie = useMemo(() => {
     const map = {};
     monthTx.filter((t) => t.type === "depense").forEach((t) => { map[t.categorie] = (map[t.categorie] || 0) + Number(t.montant); });
@@ -955,9 +983,9 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
         <div>
           <p className="text-xs uppercase tracking-wide font-semibold" style={{ color: accent.deep }}>Solde total</p>
           <p className="text-3xl font-serif font-bold" style={{ color: accent.deep }}>{formatEUR(soldeTotal)}</p>
-          {!!transactionsFutures.length && (
+          {!!transactionsNonRealisees.length && (
             <p className="text-[11px] mt-1" style={{ color: INK_SOFT }}>
-              {transactionsFutures.length} transaction{transactionsFutures.length > 1 ? "s" : ""} datée{transactionsFutures.length > 1 ? "s" : ""} dans le futur, pas encore comptée{transactionsFutures.length > 1 ? "s" : ""} ici
+              {transactionsNonRealisees.length} transaction{transactionsNonRealisees.length > 1 ? "s" : ""} pas encore réalisée{transactionsNonRealisees.length > 1 ? "s" : ""}, pas comptée{transactionsNonRealisees.length > 1 ? "s" : ""} ici
             </p>
           )}
         </div>
@@ -1081,6 +1109,18 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
           </Field>
         </div>
         <div className="flex items-center gap-2 mt-3">
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: INK_SOFT }}>
+            <input type="checkbox" checked={form.realisee} onChange={(e) => setForm({ ...form, realisee: e.target.checked })} className="w-4 h-4" />
+            Déjà réalisée (compte dans le solde) — décoche si c'est juste prévu pour plus tard
+          </label>
+        </div>
+        <div className="flex items-center gap-2 mt-2">
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: INK_SOFT }}>
+            <input type="checkbox" checked={form.interne} onChange={(e) => setForm({ ...form, interne: e.target.checked })} className="w-4 h-4" />
+            Virement interne (épargne ↔ compte...) — affecte le solde du compte mais pas "Rentrées"/l'équilibre revenus-dépenses
+          </label>
+        </div>
+        <div className="flex items-center gap-2 mt-3">
           <input className={inputCls + " flex-1 max-w-[180px]"} style={{ borderColor: LINE }} placeholder="Nouvelle catégorie" value={newCat} onChange={(e) => setNewCat(e.target.value)} />
           <button onClick={addCategorie} className="text-xs px-2.5 py-1.5 rounded-md border font-semibold" style={{ borderColor: LINE, color: accent.deep }}>+ Catégorie</button>
           <div className="flex-1" />
@@ -1111,12 +1151,21 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
         <Card>
           <SectionTitle accent={accent}>Historique récent</SectionTitle>
           <div className="flex flex-col gap-1.5 max-h-72 overflow-auto pr-1">
-            {transactions.slice(0, 40).map((t) => (
-              <div key={t.id} className="flex items-center justify-between text-sm py-1 border-b" style={{ borderColor: LINE }}>
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{t.description || t.categorie}</p>
-                  <p className="text-xs" style={{ color: INK_SOFT }}>{t.date} · {t.compte} · {t.categorie}</p>
-                </div>
+            {transactions.slice(0, 40).map((t) => {
+              const nonRealisee = t.realisee === false;
+              return (
+              <div key={t.id} className="flex items-center justify-between text-sm py-1.5 border-b px-1 rounded" style={{ borderColor: LINE, background: nonRealisee ? "#FCEFD9" : "transparent" }}>
+                <label className="flex items-start gap-2 min-w-0 cursor-pointer">
+                  <input type="checkbox" checked={!nonRealisee} onChange={() => toggleRealisee(t.id)} className="w-4 h-4 mt-0.5 shrink-0" title="Décoche si ce n'est pas encore réalisé" />
+                  <div className="min-w-0">
+                    <p className="truncate font-medium flex items-center gap-1.5">
+                      {t.description || t.categorie}
+                      {t.interne && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0" style={{ background: accent.soft, color: accent.deep }}>virement interne</span>}
+                      {nonRealisee && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0" style={{ background: "#F0C36B", color: "#5C4300" }}>pas encore réalisée</span>}
+                    </p>
+                    <p className="text-xs" style={{ color: INK_SOFT }}>{t.date} · {t.compte} · {t.categorie}</p>
+                  </div>
+                </label>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="font-semibold flex items-center gap-1" style={{ color: t.type === "revenu" ? accent.deep : "#A33B3B" }}>
                     {t.type === "revenu" ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
@@ -1125,7 +1174,8 @@ function BudgetTab({ comptes, setComptes, transactions, setTransactions, categor
                   <button onClick={() => removeTransaction(t.id)} className="opacity-40 hover:opacity-100"><Trash2 size={14} /></button>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {!transactions.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucune transaction pour le moment.</p>}
           </div>
         </Card>
