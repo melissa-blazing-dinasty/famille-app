@@ -291,7 +291,8 @@ export default function App() {
   const [mensurations, setMensurations, r20] = useFirestoreArray(familyCode, authReady, "mensurations", []);
   const [seancesSport, setSeancesSport, r21] = useFirestoreArray(familyCode, authReady, "seancesSport", []);
   const [sanctions, setSanctions, r22] = useFirestoreArray(familyCode, authReady, "sanctions", []);
-  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17 && r18 && r19 && r20 && r21 && r22;
+  const [exercicesPerso, setExercicesPerso, r23] = useFirestoreArray(familyCode, authReady, "exercicesPerso", []);
+  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17 && r18 && r19 && r20 && r21 && r22 && r23;
 
   useNotifierDuJour(taches, planning);
 
@@ -461,6 +462,7 @@ export default function App() {
               sportMembres={sportMembres} setSportMembres={setSportMembres}
               mensurations={mensurations} setMensurations={setMensurations}
               seancesSport={seancesSport} setSeancesSport={setSeancesSport}
+              exercicesPerso={exercicesPerso} setExercicesPerso={setExercicesPerso}
               accent={ACCENTS.sport}
             />
           )}
@@ -2516,19 +2518,32 @@ const CATEGORIES_SPORT = {
   },
 };
 
-function SportTab({ sportMembres, setSportMembres, mensurations, setMensurations, seancesSport, setSeancesSport, accent }) {
+function SportTab({ sportMembres, setSportMembres, mensurations, setMensurations, seancesSport, setSeancesSport, exercicesPerso, setExercicesPerso, accent }) {
   const [selectedId, setSelectedId] = useState(sportMembres[0]?.id || null);
   const [newNom, setNewNom] = useState("");
   const [mensuForm, setMensuForm] = useState({ taille: "", poids: "" });
   const [catOuverte, setCatOuverte] = useState("musculation");
   const [seanceForm, setSeanceForm] = useState({ exercice: CATEGORIES_SPORT.musculation.exercices[0].nom, dureeMin: 20, difficulte: "moyen" });
   const [dernierGain, setDernierGain] = useState(null);
+  const [nouvelExo, setNouvelExo] = useState({ nom: "", conseil: "" });
 
   useEffect(() => {
     if (!selectedId && sportMembres.length) setSelectedId(sportMembres[0].id);
   }, [sportMembres]);
 
   const membre = sportMembres.find((m) => m.id === selectedId);
+
+  // Catalogue affiché = exercices "de base" + ceux ajoutés par la famille pour cette catégorie
+  const exercicesCategorie = [
+    ...CATEGORIES_SPORT[catOuverte].exercices.map((e) => ({ ...e, perso: false })),
+    ...exercicesPerso.filter((e) => e.categorie === catOuverte).map((e) => ({ ...e, perso: true })),
+  ];
+  const ajouterExercicePerso = () => {
+    if (!nouvelExo.nom.trim()) return;
+    setExercicesPerso((prev) => [...prev, { id: uid(), categorie: catOuverte, nom: nouvelExo.nom.trim(), conseil: nouvelExo.conseil.trim() }]);
+    setNouvelExo({ nom: "", conseil: "" });
+  };
+  const supprimerExercicePerso = (id) => setExercicesPerso((prev) => prev.filter((e) => e.id !== id));
 
   const addMembre = () => {
     if (!newNom.trim()) return;
@@ -2677,15 +2692,33 @@ function SportTab({ sportMembres, setSportMembres, mensurations, setMensurations
             </div>
 
             <div className="flex flex-col gap-1.5 mb-3">
-              {CATEGORIES_SPORT[catOuverte].exercices.map((ex) => (
-                <label key={ex.nom} className="flex items-start gap-2 px-2.5 py-2 rounded-md cursor-pointer" style={{ background: seanceForm.exercice === ex.nom ? accent.soft : "transparent", border: `1px solid ${LINE}` }}>
-                  <input type="radio" name="exercice" checked={seanceForm.exercice === ex.nom} onChange={() => setSeanceForm({ ...seanceForm, exercice: ex.nom })} className="mt-1" />
-                  <div>
-                    <p className="text-sm font-medium">{ex.nom}</p>
-                    <p className="text-xs" style={{ color: INK_SOFT }}>{ex.conseil}</p>
+              {exercicesCategorie.map((ex) => (
+                <label key={ex.id || ex.nom} className="flex items-start justify-between gap-2 px-2.5 py-2 rounded-md cursor-pointer" style={{ background: seanceForm.exercice === ex.nom ? accent.soft : "transparent", border: `1px solid ${LINE}` }}>
+                  <div className="flex items-start gap-2">
+                    <input type="radio" name="exercice" checked={seanceForm.exercice === ex.nom} onChange={() => setSeanceForm({ ...seanceForm, exercice: ex.nom })} className="mt-1" />
+                    <div>
+                      <p className="text-sm font-medium flex items-center gap-1.5">
+                        {ex.nom}
+                        {ex.perso && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: accent.soft, color: accent.deep }}>ajouté</span>}
+                      </p>
+                      {ex.conseil && <p className="text-xs" style={{ color: INK_SOFT }}>{ex.conseil}</p>}
+                    </div>
                   </div>
+                  {ex.perso && (
+                    <button onClick={(e) => { e.preventDefault(); supprimerExercicePerso(ex.id); }} className="opacity-40 hover:opacity-100 shrink-0"><Trash2 size={13} /></button>
+                  )}
                 </label>
               ))}
+            </div>
+
+            <div className="flex flex-wrap gap-2 items-end pt-2 pb-3 border-t border-b mb-3" style={{ borderColor: LINE }}>
+              <Field label="Nouvel exercice">
+                <input className={inputCls} style={{ borderColor: LINE }} value={nouvelExo.nom} onChange={(e) => setNouvelExo({ ...nouvelExo, nom: e.target.value })} placeholder="Nom de l'exercice" />
+              </Field>
+              <Field label="Conseil (optionnel)">
+                <input className={inputCls + " w-56"} style={{ borderColor: LINE }} value={nouvelExo.conseil} onChange={(e) => setNouvelExo({ ...nouvelExo, conseil: e.target.value })} placeholder="Astuce de posture..." />
+              </Field>
+              <button onClick={ajouterExercicePerso} className="h-8 px-3 rounded-md text-sm font-semibold border flex items-center gap-1" style={{ borderColor: LINE, color: accent.deep }}><Plus size={15} />Ajouter à "{CATEGORIES_SPORT[catOuverte].label}"</button>
             </div>
 
             <div className="flex flex-wrap gap-2 items-end pt-2 border-t" style={{ borderColor: LINE }}>
