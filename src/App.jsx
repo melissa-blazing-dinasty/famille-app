@@ -35,6 +35,55 @@ const TYPES_PLAT = ["Entrée", "Plat", "Dessert", "Goûter"];
 const JOURS_FR = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
+
+/* ------------------------------------------------------------------ */
+/* Déverrouillage biométrique du mode parent (Face ID / empreinte /    */
+/* Windows Hello), via l'API standard WebAuthn du navigateur. Ça       */
+/* s'enregistre PAR APPAREIL (stocké dans le localStorage de ce        */
+/* téléphone/ordinateur) — chacun active la sienne sur son appareil.   */
+/* ------------------------------------------------------------------ */
+function bufToBase64(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)));
+}
+function base64ToBuf(b64) {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
+}
+function biometrieDisponible() {
+  return typeof window !== "undefined" && !!window.PublicKeyCredential;
+}
+function cleBiometrie(familyCode) {
+  return `bioCredId_${familyCode}`;
+}
+async function enregistrerBiometrie(familyCode) {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const userId = crypto.getRandomValues(new Uint8Array(16));
+  const cred = await navigator.credentials.create({
+    publicKey: {
+      challenge,
+      rp: { name: "Carnet de famille" },
+      user: { id: userId, name: "parent", displayName: "Parent" },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" },
+      timeout: 60000,
+    },
+  });
+  localStorage.setItem(cleBiometrie(familyCode), bufToBase64(cred.rawId));
+}
+async function deverrouillerAvecBiometrie(familyCode) {
+  const credId = localStorage.getItem(cleBiometrie(familyCode));
+  if (!credId) return false;
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  await navigator.credentials.get({
+    publicKey: {
+      challenge,
+      allowCredentials: [{ id: base64ToBuf(credId), type: "public-key" }],
+      userVerification: "required",
+      timeout: 60000,
+    },
+  });
+  return true; // si ça n'a pas levé d'erreur, la vérification (Face ID/empreinte) a réussi
+}
+
 function todayISO() {
   const d = new Date();
   const annee = d.getFullYear();
@@ -293,7 +342,8 @@ export default function App() {
   const [sanctions, setSanctions, r22] = useFirestoreArray(familyCode, authReady, "sanctions", []);
   const [exercicesPerso, setExercicesPerso, r23] = useFirestoreArray(familyCode, authReady, "exercicesPerso", []);
   const [sanctionsPerso, setSanctionsPerso, r24] = useFirestoreArray(familyCode, authReady, "sanctionsPerso", []);
-  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17 && r18 && r19 && r20 && r21 && r22 && r23 && r24;
+  const [lecturesSessions, setLecturesSessions, r25] = useFirestoreArray(familyCode, authReady, "lecturesSessions", []);
+  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17 && r18 && r19 && r20 && r21 && r22 && r23 && r24 && r25;
 
   useNotifierDuJour(taches, planning);
 
@@ -453,6 +503,8 @@ export default function App() {
               parentPin={parentPin} setParentPin={setParentPin}
               sanctions={sanctions} setSanctions={setSanctions}
               sanctionsPerso={sanctionsPerso} setSanctionsPerso={setSanctionsPerso}
+              lecturesSessions={lecturesSessions} setLecturesSessions={setLecturesSessions}
+              familyCode={familyCode}
               accent={ACCENTS.enfants}
             />
           ) : tab === "planning" ? (
@@ -1413,7 +1465,8 @@ function MenusTab({ menus, setMenus, recettes, setRecettes, accent, menuIdees, s
 
   const jours = useMemo(() => {
     const arr = [];
-    const d0 = new Date(start + "T00:00:00");
+    const startEffectif = start < todayISO() ? todayISO() : start; // ne montre jamais un jour déjà passé
+    const d0 = new Date(startEffectif + "T00:00:00");
     for (let i = 0; i < duree; i++) {
       const d = new Date(d0); d.setDate(d0.getDate() + i);
       arr.push(d.toISOString().slice(0, 10));
@@ -1898,7 +1951,7 @@ const SANCTIONS_DE_BASE = [
   { motif: "Trop de temps sur le téléphone", emoji: "📱", points: 5 },
 ];
 
-function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRecompenses, menus, menuIdees, setMenuIdees, parentPin, setParentPin, sanctions, setSanctions, sanctionsPerso, setSanctionsPerso, accent }) {
+function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRecompenses, menus, menuIdees, setMenuIdees, parentPin, setParentPin, sanctions, setSanctions, sanctionsPerso, setSanctionsPerso, lecturesSessions, setLecturesSessions, familyCode, accent }) {
   const [selectedId, setSelectedId] = useState(enfants[0]?.id || null);
   const [newPrenom, setNewPrenom] = useState("");
   const [tacheForm, setTacheForm] = useState({ titre: "", points: 5, rappelDate: "" });
@@ -1947,6 +2000,57 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
     if (pinSaisi === parentPin) { setModeParent(true); setPinSaisi(""); setErreurPin(""); }
     else setErreurPin("Code incorrect.");
   };
+
+  const [bioActivee, setBioActivee] = useState(() => !!localStorage.getItem(cleBiometrie(familyCode)));
+  const [erreurBio, setErreurBio] = useState("");
+  const activerBio = async () => {
+    setErreurBio("");
+    try {
+      await enregistrerBiometrie(familyCode);
+      setBioActivee(true);
+    } catch (e) {
+      setErreurBio("Impossible d'activer — ton appareil ne supporte peut-être pas Face ID/empreinte, ou tu as annulé.");
+    }
+  };
+  const deverrouillerBio = async () => {
+    setErreurBio("");
+    try {
+      const ok = await deverrouillerAvecBiometrie(familyCode);
+      if (ok) setModeParent(true);
+    } catch (e) {
+      setErreurBio("Échec de la vérification (annulé ou non reconnu).");
+    }
+  };
+
+  // --- Défi lecture : chrono démarrable par l'enfant ou par un parent ---
+  const [chronoDebut, setChronoDebut] = useState(null); // timestamp (ms) ou null si arrêté
+  const [chronoEcoule, setChronoEcoule] = useState(0); // secondes, mis à jour en direct
+  useEffect(() => {
+    if (chronoDebut === null) return;
+    const interval = setInterval(() => setChronoEcoule(Math.floor((Date.now() - chronoDebut) / 1000)), 1000);
+    return () => clearInterval(interval);
+  }, [chronoDebut]);
+  const demarrerChrono = () => { setChronoDebut(Date.now()); setChronoEcoule(0); };
+  const arreterChrono = () => {
+    const secondes = Math.floor((Date.now() - chronoDebut) / 1000);
+    setChronoDebut(null);
+    setChronoEcoule(0);
+    if (secondes < 10 || !selectedId) return; // ignore les arrêts trop rapides (clic accidentel)
+    const points = Math.round((secondes / 60) * 0.5 * 10) / 10; // 0,5 point par minute lue
+    setLecturesSessions((prev) => [{ id: uid(), enfantId: selectedId, date: todayISO(), dureeSec: secondes, points, valide: false }, ...prev]);
+  };
+  const validerLecture = (l) => {
+    setLecturesSessions((prev) => prev.map((x) => (x.id === l.id ? { ...x, valide: true } : x)));
+    setEnfants((prev) => prev.map((e) => (e.id === l.enfantId ? { ...e, bonPoints: e.bonPoints + l.points } : e)));
+  };
+  const refuserLecture = (l) => setLecturesSessions((prev) => prev.filter((x) => x.id !== l.id));
+  const formatDureeChrono = (sec) => {
+    const m = Math.floor(sec / 60).toString().padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
+  const lecturesEnfant = lecturesSessions.filter((l) => l.enfantId === selectedId).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const totalMinutesLues = Math.round(lecturesEnfant.filter((l) => l.valide).reduce((s, l) => s + l.dureeSec, 0) / 60);
 
   const addEnfant = () => {
     if (!newPrenom.trim()) return;
@@ -2107,9 +2211,22 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
           {modeParent ? "Mode parent déverrouillé" : "Mode enfant — seuls les parents peuvent modifier"}
         </span>
         {modeParent ? (
-          <button onClick={() => setModeParent(false)} className="text-xs px-2.5 py-1.5 rounded-md font-semibold border" style={{ borderColor: LINE, color: INK_SOFT }}>Reverrouiller</button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {biometrieDisponible() && !bioActivee && (
+              <button onClick={activerBio} className="text-xs px-2.5 py-1.5 rounded-md font-semibold border flex items-center gap-1" style={{ borderColor: LINE, color: accent.deep }}>
+                📱 Activer Face ID / empreinte sur cet appareil
+              </button>
+            )}
+            {bioActivee && <span className="text-xs" style={{ color: INK_SOFT }}>📱 Face ID/empreinte activée sur cet appareil</span>}
+            <button onClick={() => setModeParent(false)} className="text-xs px-2.5 py-1.5 rounded-md font-semibold border" style={{ borderColor: LINE, color: INK_SOFT }}>Reverrouiller</button>
+          </div>
         ) : (
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {biometrieDisponible() && bioActivee && (
+              <button onClick={deverrouillerBio} className="text-xs px-2.5 py-1.5 rounded-md font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}>
+                📱 Déverrouiller avec Face ID / empreinte
+              </button>
+            )}
             <input
               type="password"
               inputMode="numeric"
@@ -2127,6 +2244,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
         )}
       </div>
       {erreurPin && <p className="text-xs -mt-4" style={{ color: "#A33B3B" }}>{erreurPin}</p>}
+      {erreurBio && <p className="text-xs -mt-4" style={{ color: "#A33B3B" }}>{erreurBio}</p>}
 
       <Card>
         <div className="flex flex-wrap items-center gap-2">
@@ -2270,6 +2388,50 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
               )}
             </Card>
           )}
+
+          {/* Défi lecture — chrono démarrable par l'enfant ou le parent */}
+          <Card>
+            <SectionTitle accent={accent}>📖 Défi lecture</SectionTitle>
+            <p className="text-xs mb-3" style={{ color: INK_SOFT }}>
+              Lance le chrono avant de commencer à lire, arrête-le à la fin — ça donne 0,5 point par minute lue, une fois validé par un parent. Accessible sans code parent.
+            </p>
+            <div className="flex items-center gap-4 flex-wrap">
+              <p className="font-serif font-bold text-3xl tabular-nums" style={{ color: chronoDebut ? accent.deep : INK_SOFT }}>
+                {formatDureeChrono(chronoEcoule)}
+              </p>
+              {chronoDebut === null ? (
+                <button onClick={demarrerChrono} className="h-10 px-4 rounded-md text-sm font-semibold text-white flex items-center gap-1.5" style={{ background: accent.main }}>
+                  ▶ Démarrer la lecture
+                </button>
+              ) : (
+                <button onClick={arreterChrono} className="h-10 px-4 rounded-md text-sm font-semibold text-white flex items-center gap-1.5" style={{ background: "#A33B3B" }}>
+                  ■ Arrêter
+                </button>
+              )}
+              <span className="text-sm" style={{ color: INK_SOFT }}>Total lu (validé) : <strong style={{ color: accent.deep }}>{totalMinutesLues} min</strong></span>
+            </div>
+            {!!lecturesEnfant.length && (
+              <div className="flex flex-col gap-1 mt-3 pt-3 border-t max-h-52 overflow-auto" style={{ borderColor: LINE }}>
+                {lecturesEnfant.slice(0, 15).map((l) => (
+                  <div key={l.id} className="flex items-center justify-between text-sm py-1 flex-wrap gap-y-1">
+                    <span className="flex items-center gap-1.5">
+                      {formatDateFR(l.date)} · {formatDureeChrono(l.dureeSec)}
+                      {!l.valide && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F0C36B", color: "#5C4300" }}>en attente de validation</span>}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span style={{ color: l.valide ? accent.deep : INK_SOFT }}>+{l.points} pts</span>
+                      {!l.valide && modeParent && (
+                        <>
+                          <button onClick={() => validerLecture(l)} className="text-xs px-2 py-1 rounded-md font-semibold text-white" style={{ background: accent.main }}>Valider</button>
+                          <button onClick={() => refuserLecture(l)} className="text-xs px-2 py-1 rounded-md font-semibold border" style={{ borderColor: LINE, color: INK_SOFT }}>Refuser</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
 
           {/* Jauge argent de poche */}
           <Card>
