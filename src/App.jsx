@@ -19,6 +19,7 @@ const INK_SOFT = "#6B6357";
 const TAN = "#CBA876";
 const LINE = "#DCD0B8";
 
+const ORDRE_ESPACE_ENFANT_GLOBAL = ["enfants", "sport", "todo", "menus", "recettes"];
 const ACCENTS = {
   budget: { main: "#5F7A5A", soft: "#E4EBDF", deep: "#425840" },
   menus: { main: "#C17A3B", soft: "#F5E4D2", deep: "#8C5527" },
@@ -291,6 +292,8 @@ function FamilyCodeGate({ onValidate }) {
 
 export default function App() {
   const [tab, setTab] = useState("budget");
+  const [espaceEnfant, setEspaceEnfant] = useState(false);
+  const [enfantActifId, setEnfantActifId] = useState(null);
   const [familyCode, setFamilyCode] = useState(() => localStorage.getItem("familyCode") || "");
   const [authReady, setAuthReady] = useState(false);
   const [syncErrors, setSyncErrors] = useState([]);
@@ -348,6 +351,13 @@ export default function App() {
   useNotifierDuJour(taches, planning);
 
   const [saveStatus, setSaveStatus] = useState("");
+  const basculerEspaceEnfant = () => {
+    const versEnfant = !espaceEnfant;
+    setEspaceEnfant(versEnfant);
+    setEnfantActifId(null);
+    if (versEnfant && !ORDRE_ESPACE_ENFANT_GLOBAL.includes(tab)) setTab("enfants");
+  };
+
   const enregistrerMaintenant = async () => {
     setSaveStatus("saving");
     const entries = [
@@ -389,12 +399,16 @@ export default function App() {
     { id: "epargne", label: "Épargne", icon: PiggyBank, accent: ACCENTS.epargne },
     { id: "menus", label: "Menus", icon: CalendarDays, accent: ACCENTS.menus },
     { id: "recettes", label: "Recettes", icon: BookOpen, accent: ACCENTS.recettes },
-    { id: "enfants", label: "Enfants", icon: Baby, accent: ACCENTS.enfants },
+    { id: "enfants", label: "Bons points", icon: Baby, accent: ACCENTS.enfants },
     { id: "planning", label: "Planning", icon: Calendar, accent: ACCENTS.planning },
     { id: "todo", label: "À faire", icon: ListChecks, accent: ACCENTS.todo },
     { id: "sport", label: "Sport", icon: Dumbbell, accent: ACCENTS.sport },
   ];
-  const active = tabs.find((t) => t.id === tab);
+  // Espace enfant : uniquement ces 5 onglets, dans cet ordre, sans accès au Budget/Épargne/Planning.
+  const tabsAffiches = espaceEnfant
+    ? ORDRE_ESPACE_ENFANT_GLOBAL.map((id) => tabs.find((t) => t.id === id))
+    : tabs;
+  const active = tabsAffiches.find((t) => t.id === tab) || tabsAffiches[0];
 
   return (
     <div className="min-h-screen w-full flex flex-col sm:flex-row" style={{ background: PAPER, color: INK, fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
@@ -408,7 +422,7 @@ export default function App() {
       )}
       {/* Onglets style classeur */}
       <nav className="flex sm:flex-col shrink-0 sm:w-20 border-b sm:border-b-0 sm:border-r overflow-x-auto sm:overflow-y-auto" style={{ borderColor: LINE }}>
-        {tabs.map((t) => {
+        {tabsAffiches.map((t) => {
           const Icon = t.icon;
           const isActive = t.id === tab;
           return (
@@ -429,22 +443,39 @@ export default function App() {
       </nav>
 
       <main className="flex-1 min-w-0">
-        <header className="px-5 sm:px-8 py-5 border-b flex items-start justify-between gap-3" style={{ borderColor: LINE, background: PAPER_DARK }}>
+        <header className="px-5 sm:px-8 py-5 border-b flex items-start justify-between gap-3" style={{ borderColor: LINE, background: espaceEnfant ? ACCENTS.enfants.soft : PAPER_DARK }}>
           <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] font-semibold" style={{ color: active.accent.main }}>
-              Carnet de famille · <span className="normal-case tracking-normal font-mono" style={{ color: INK_SOFT }}>code : {familyCode} ({familyCode.length} car.)</span>
-              {" "}
-              <button
-                onClick={() => { if (window.confirm("Changer de code famille ? Tu devras retaper le bon code pour retrouver tes données.")) { localStorage.removeItem("familyCode"); window.location.reload(); } }}
-                className="normal-case tracking-normal underline"
-                style={{ color: INK_SOFT }}
-              >
-                (changer)
-              </button>
-            </p>
+            {espaceEnfant ? (
+              <p className="text-[11px] uppercase tracking-[0.2em] font-semibold" style={{ color: ACCENTS.enfants.deep }}>🎉 Mon espace</p>
+            ) : (
+              <p className="text-[11px] uppercase tracking-[0.2em] font-semibold" style={{ color: active.accent.main }}>
+                Carnet de famille · <span className="normal-case tracking-normal font-mono" style={{ color: INK_SOFT }}>code : {familyCode} ({familyCode.length} car.)</span>
+                {" "}
+                <button
+                  onClick={() => { if (window.confirm("Changer de code famille ? Tu devras retaper le bon code pour retrouver tes données.")) { localStorage.removeItem("familyCode"); window.location.reload(); } }}
+                  className="normal-case tracking-normal underline"
+                  style={{ color: INK_SOFT }}
+                >
+                  (changer)
+                </button>
+              </p>
+            )}
             <h1 className="text-2xl sm:text-3xl font-serif font-semibold mt-0.5" style={{ color: INK }}>{active.label}</h1>
           </div>
           <div className="flex items-center gap-2 mt-1">
+            <button
+              onClick={basculerEspaceEnfant}
+              title={espaceEnfant ? "Revenir à l'espace complet" : "Passer à l'espace enfant (Budget/Épargne masqués)"}
+              className="shrink-0 flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-md border"
+              style={{
+                borderColor: espaceEnfant ? ACCENTS.enfants.main : LINE,
+                color: espaceEnfant ? "#fff" : INK_SOFT,
+                background: espaceEnfant ? ACCENTS.enfants.main : "transparent",
+              }}
+            >
+              {espaceEnfant ? "🔓" : "🎈"}
+              <span className="hidden sm:inline">{espaceEnfant ? "Revenir à l'espace complet" : "Espace enfant"}</span>
+            </button>
             <button
               onClick={enregistrerMaintenant}
               title="Force l'enregistrement immédiat de toutes les données, avec confirmation du serveur"
@@ -474,6 +505,21 @@ export default function App() {
         <div className="px-5 sm:px-8 py-6">
           {!loaded ? (
             <p className="text-sm" style={{ color: INK_SOFT }}>Chargement des données…</p>
+          ) : espaceEnfant && !enfantActifId ? (
+            <div className="max-w-md mx-auto text-center pt-8">
+              <p className="text-2xl font-serif font-semibold mb-1">👋 Qui es-tu ?</p>
+              <p className="text-sm mb-6" style={{ color: INK_SOFT }}>Choisis ton prénom pour voir ton espace.</p>
+              <div className="flex flex-col gap-2.5">
+                {enfants.map((e) => (
+                  <button key={e.id} onClick={() => setEnfantActifId(e.id)}
+                    className="py-3 rounded-lg text-lg font-semibold border-2"
+                    style={{ borderColor: ACCENTS.enfants.main, color: ACCENTS.enfants.deep, background: ACCENTS.enfants.soft }}>
+                    {e.prenom}
+                  </button>
+                ))}
+                {!enfants.length && <p className="text-sm" style={{ color: INK_SOFT }}>Aucun profil enfant créé — demande à un parent d'en ajouter un dans l'espace complet.</p>}
+              </div>
+            </div>
           ) : tab === "budget" ? (
             <BudgetTab
               comptes={comptes} setComptes={setComptes}
@@ -505,6 +551,8 @@ export default function App() {
               sanctionsPerso={sanctionsPerso} setSanctionsPerso={setSanctionsPerso}
               lecturesSessions={lecturesSessions} setLecturesSessions={setLecturesSessions}
               familyCode={familyCode}
+              enfantActifId={espaceEnfant ? enfantActifId : null}
+              onChangerProfil={() => setEnfantActifId(null)}
               accent={ACCENTS.enfants}
             />
           ) : tab === "planning" ? (
@@ -517,6 +565,8 @@ export default function App() {
               mensurations={mensurations} setMensurations={setMensurations}
               seancesSport={seancesSport} setSeancesSport={setSeancesSport}
               exercicesPerso={exercicesPerso} setExercicesPerso={setExercicesPerso}
+              nomActif={espaceEnfant ? (enfants.find((e) => e.id === enfantActifId)?.prenom || null) : null}
+              onChangerProfil={() => setEnfantActifId(null)}
               accent={ACCENTS.sport}
             />
           )}
@@ -1951,7 +2001,7 @@ const SANCTIONS_DE_BASE = [
   { motif: "Trop de temps sur le téléphone", emoji: "📱", points: 5 },
 ];
 
-function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRecompenses, menus, menuIdees, setMenuIdees, parentPin, setParentPin, sanctions, setSanctions, sanctionsPerso, setSanctionsPerso, lecturesSessions, setLecturesSessions, familyCode, accent }) {
+function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRecompenses, menus, menuIdees, setMenuIdees, parentPin, setParentPin, sanctions, setSanctions, sanctionsPerso, setSanctionsPerso, lecturesSessions, setLecturesSessions, familyCode, enfantActifId, onChangerProfil, accent }) {
   const [selectedId, setSelectedId] = useState(enfants[0]?.id || null);
   const [newPrenom, setNewPrenom] = useState("");
   const [tacheForm, setTacheForm] = useState({ titre: "", points: 5, rappelDate: "" });
@@ -1973,6 +2023,12 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   useEffect(() => {
     if (!selectedId && enfants.length) setSelectedId(enfants[0].id);
   }, [enfants]);
+
+  // Espace enfant verrouillé : on force la sélection sur le profil choisi
+  // à l'écran "Qui es-tu ?", impossible de voir les autres.
+  useEffect(() => {
+    if (enfantActifId) setSelectedId(enfantActifId);
+  }, [enfantActifId]);
 
   // Change d'enfant sélectionné → on vide les brouillons de formulaire
   // (jauge, ajustements...) pour ne jamais laisser croire qu'une valeur
@@ -2247,24 +2303,33 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
       {erreurBio && <p className="text-xs -mt-4" style={{ color: "#A33B3B" }}>{erreurBio}</p>}
 
       <Card>
-        <div className="flex flex-wrap items-center gap-2">
-          {enfants.map((e) => (
-            <button key={e.id} onClick={() => setSelectedId(e.id)}
-              className="px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5"
-              style={{ background: selectedId === e.id ? accent.main : accent.soft, color: selectedId === e.id ? "#fff" : accent.deep }}>
-              {e.prenom}
-            </button>
-          ))}
-          {modeParent && (
-            <>
-              <input className={inputCls + " w-32"} style={{ borderColor: LINE }} placeholder="Prénom" value={newPrenom} onChange={(e) => setNewPrenom(e.target.value)} />
-              <button onClick={addEnfant} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter un enfant</button>
-            </>
-          )}
-        </div>
+        {enfantActifId ? (
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <span className="px-3 py-1.5 rounded-full text-sm font-semibold" style={{ background: accent.main, color: "#fff" }}>{enfant?.prenom}</span>
+            {onChangerProfil && (
+              <button onClick={onChangerProfil} className="text-xs underline" style={{ color: INK_SOFT }}>Ce n'est pas moi</button>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            {enfants.map((e) => (
+              <button key={e.id} onClick={() => setSelectedId(e.id)}
+                className="px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5"
+                style={{ background: selectedId === e.id ? accent.main : accent.soft, color: selectedId === e.id ? "#fff" : accent.deep }}>
+                {e.prenom}
+              </button>
+            ))}
+            {modeParent && (
+              <>
+                <input className={inputCls + " w-32"} style={{ borderColor: LINE }} placeholder="Prénom" value={newPrenom} onChange={(e) => setNewPrenom(e.target.value)} />
+                <button onClick={addEnfant} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter un enfant</button>
+              </>
+            )}
+          </div>
+        )}
       </Card>
 
-      {enfants.length >= 2 && (
+      {!enfantActifId && enfants.length >= 2 && (
         <Card>
           <SectionTitle accent={accent}>🏆 Classement des bons points</SectionTitle>
           <div className="flex flex-col gap-2">
@@ -2770,7 +2835,7 @@ const CATEGORIES_SPORT = {
   },
 };
 
-function SportTab({ sportMembres, setSportMembres, mensurations, setMensurations, seancesSport, setSeancesSport, exercicesPerso, setExercicesPerso, accent }) {
+function SportTab({ sportMembres, setSportMembres, mensurations, setMensurations, seancesSport, setSeancesSport, exercicesPerso, setExercicesPerso, nomActif, onChangerProfil, accent }) {
   const [selectedId, setSelectedId] = useState(sportMembres[0]?.id || null);
   const [newNom, setNewNom] = useState("");
   const [mensuForm, setMensuForm] = useState({ taille: "", poids: "" });
@@ -2782,6 +2847,21 @@ function SportTab({ sportMembres, setSportMembres, mensurations, setMensurations
   useEffect(() => {
     if (!selectedId && sportMembres.length) setSelectedId(sportMembres[0].id);
   }, [sportMembres]);
+
+  // Espace enfant verrouillé : on cherche (ou crée) le profil sport
+  // correspondant au prénom actif, et on verrouille dessus.
+  useEffect(() => {
+    if (!nomActif) return;
+    const existant = sportMembres.find((m) => m.nom.trim().toLowerCase() === nomActif.trim().toLowerCase());
+    if (existant) {
+      setSelectedId(existant.id);
+    } else {
+      const nouveau = { id: uid(), nom: nomActif };
+      setSportMembres((prev) => [...prev, nouveau]);
+      setSelectedId(nouveau.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nomActif]);
 
   const membre = sportMembres.find((m) => m.id === selectedId);
 
@@ -2843,20 +2923,29 @@ function SportTab({ sportMembres, setSportMembres, mensurations, setMensurations
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
       <Card>
-        <div className="flex flex-wrap items-center gap-2">
-          {sportMembres.map((m) => (
-            <button key={m.id} onClick={() => setSelectedId(m.id)}
-              className="px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5"
-              style={{ background: selectedId === m.id ? accent.main : accent.soft, color: selectedId === m.id ? "#fff" : accent.deep }}>
-              {m.nom}
-            </button>
-          ))}
-          <input className={inputCls + " w-32"} style={{ borderColor: LINE }} placeholder="Prénom" value={newNom} onChange={(e) => setNewNom(e.target.value)} />
-          <button onClick={addMembre} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter</button>
-        </div>
+        {nomActif ? (
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <span className="px-3 py-1.5 rounded-full text-sm font-semibold" style={{ background: accent.main, color: "#fff" }}>{membre?.nom}</span>
+            {onChangerProfil && (
+              <button onClick={onChangerProfil} className="text-xs underline" style={{ color: INK_SOFT }}>Ce n'est pas moi</button>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            {sportMembres.map((m) => (
+              <button key={m.id} onClick={() => setSelectedId(m.id)}
+                className="px-3 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5"
+                style={{ background: selectedId === m.id ? accent.main : accent.soft, color: selectedId === m.id ? "#fff" : accent.deep }}>
+                {m.nom}
+              </button>
+            ))}
+            <input className={inputCls + " w-32"} style={{ borderColor: LINE }} placeholder="Prénom" value={newNom} onChange={(e) => setNewNom(e.target.value)} />
+            <button onClick={addMembre} className="h-8 px-3 rounded-md text-sm font-semibold text-white flex items-center gap-1" style={{ background: accent.main }}><Plus size={15} />Ajouter</button>
+          </div>
+        )}
       </Card>
 
-      {sportMembres.length >= 2 && (
+      {!nomActif && sportMembres.length >= 2 && (
         <Card>
           <SectionTitle accent={accent}>🏆 Classement sportif de la famille</SectionTitle>
           <div className="flex flex-col gap-2">
