@@ -292,8 +292,24 @@ function FamilyCodeGate({ onValidate }) {
 
 export default function App() {
   const [tab, setTab] = useState("budget");
-  const [espaceEnfant, setEspaceEnfant] = useState(false);
+  // À chaque ouverture de l'appli, on redemande "enfant ou adulte" (jamais
+  // mémorisé) — passer adulte exige le code PIN parent.
+  const [espaceChoisi, setEspaceChoisi] = useState(null); // null | "enfant" | "adulte"
+  const espaceEnfant = espaceChoisi === "enfant";
   const [enfantActifId, setEnfantActifId] = useState(null);
+  const [pinAdulteSaisi, setPinAdulteSaisi] = useState("");
+  const [erreurPinAdulte, setErreurPinAdulte] = useState("");
+  const validerAdulte = () => {
+    if (!parentPin) {
+      if (pinAdulteSaisi.trim().length < 4) { setErreurPinAdulte("Choisis un code d'au moins 4 chiffres."); return; }
+      setParentPin(pinAdulteSaisi.trim());
+      setEspaceChoisi("adulte");
+      setPinAdulteSaisi(""); setErreurPinAdulte("");
+      return;
+    }
+    if (pinAdulteSaisi === parentPin) { setEspaceChoisi("adulte"); setPinAdulteSaisi(""); setErreurPinAdulte(""); }
+    else setErreurPinAdulte("Code incorrect.");
+  };
   const [familyCode, setFamilyCode] = useState(() => localStorage.getItem("familyCode") || "");
   const [authReady, setAuthReady] = useState(false);
   const [syncErrors, setSyncErrors] = useState([]);
@@ -351,14 +367,14 @@ export default function App() {
   useNotifierDuJour(taches, planning);
 
   const [saveStatus, setSaveStatus] = useState("");
-  const basculerEspaceEnfant = () => {
-    const versEnfant = !espaceEnfant;
-    setEspaceEnfant(versEnfant);
+  // Revient à l'écran "Enfant ou Adulte" — repasser adulte redemandera le code PIN.
+  const revenirAuChoixEspace = () => {
+    setEspaceChoisi(null);
     setEnfantActifId(null);
-    if (versEnfant && !ORDRE_ESPACE_ENFANT_GLOBAL.includes(tab)) setTab("enfants");
   };
 
   const enregistrerMaintenant = async () => {
+    setSaveStatus("saving");
     setSaveStatus("saving");
     const entries = [
       ["comptes", comptes], ["transactions", transactions], ["categories", categories],
@@ -392,6 +408,43 @@ export default function App() {
 
   if (!familyCode) {
     return <FamilyCodeGate onValidate={(code) => { localStorage.setItem("familyCode", code); setFamilyCode(code); }} />;
+  }
+
+  if (loaded && !espaceChoisi) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center p-6" style={{ background: PAPER }}>
+        <div className="max-w-sm w-full rounded-lg border p-6 bg-white/70 text-center" style={{ borderColor: LINE }}>
+          <h1 className="text-2xl font-serif font-semibold mb-1" style={{ color: INK }}>👋 Bienvenue !</h1>
+          <p className="text-sm mb-6" style={{ color: INK_SOFT }}>Qui utilise l'appli en ce moment ?</p>
+          <div className="flex flex-col gap-3">
+            <button onClick={() => setEspaceChoisi("enfant")}
+              className="py-4 rounded-lg text-lg font-semibold border-2"
+              style={{ borderColor: ACCENTS.enfants.main, color: ACCENTS.enfants.deep, background: ACCENTS.enfants.soft }}>
+              🎈 Je suis un enfant
+            </button>
+            <div className="pt-2 border-t" style={{ borderColor: LINE }}>
+              <p className="text-xs mt-3 mb-2" style={{ color: INK_SOFT }}>Je suis un adulte — code parent :</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  className="flex-1 border rounded-md px-3 py-2 text-sm text-center"
+                  style={{ borderColor: LINE }}
+                  placeholder={parentPin ? "Code parent" : "Choisis un code (4 chiffres min.)"}
+                  value={pinAdulteSaisi}
+                  onChange={(e) => setPinAdulteSaisi(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && validerAdulte()}
+                />
+                <button onClick={validerAdulte} className="h-9 px-4 rounded-md text-sm font-semibold text-white shrink-0" style={{ background: ACCENTS.budget.main }}>
+                  {parentPin ? "Entrer" : "Créer"}
+                </button>
+              </div>
+              {erreurPinAdulte && <p className="text-xs mt-2" style={{ color: "#A33B3B" }}>{erreurPinAdulte}</p>}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const tabs = [
@@ -464,8 +517,8 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2 mt-1">
             <button
-              onClick={basculerEspaceEnfant}
-              title={espaceEnfant ? "Revenir à l'espace complet" : "Passer à l'espace enfant (Budget/Épargne masqués)"}
+              onClick={revenirAuChoixEspace}
+              title={espaceEnfant ? "Revenir à l'espace complet (code parent requis)" : "Changer d'espace"}
               className="shrink-0 flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-md border"
               style={{
                 borderColor: espaceEnfant ? ACCENTS.enfants.main : LINE,
@@ -473,8 +526,8 @@ export default function App() {
                 background: espaceEnfant ? ACCENTS.enfants.main : "transparent",
               }}
             >
-              {espaceEnfant ? "🔓" : "🎈"}
-              <span className="hidden sm:inline">{espaceEnfant ? "Revenir à l'espace complet" : "Espace enfant"}</span>
+              {espaceEnfant ? "🔒" : "🔄"}
+              <span className="hidden sm:inline">{espaceEnfant ? "Espace enfant (changer)" : "Changer d'espace"}</span>
             </button>
             <button
               onClick={enregistrerMaintenant}
