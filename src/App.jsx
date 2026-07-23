@@ -292,7 +292,8 @@ export default function App() {
   const [seancesSport, setSeancesSport, r21] = useFirestoreArray(familyCode, authReady, "seancesSport", []);
   const [sanctions, setSanctions, r22] = useFirestoreArray(familyCode, authReady, "sanctions", []);
   const [exercicesPerso, setExercicesPerso, r23] = useFirestoreArray(familyCode, authReady, "exercicesPerso", []);
-  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17 && r18 && r19 && r20 && r21 && r22 && r23;
+  const [sanctionsPerso, setSanctionsPerso, r24] = useFirestoreArray(familyCode, authReady, "sanctionsPerso", []);
+  const loaded = r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17 && r18 && r19 && r20 && r21 && r22 && r23 && r24;
 
   useNotifierDuJour(taches, planning);
 
@@ -451,6 +452,7 @@ export default function App() {
               menus={menus} menuIdees={menuIdees} setMenuIdees={setMenuIdees}
               parentPin={parentPin} setParentPin={setParentPin}
               sanctions={sanctions} setSanctions={setSanctions}
+              sanctionsPerso={sanctionsPerso} setSanctionsPerso={setSanctionsPerso}
               accent={ACCENTS.enfants}
             />
           ) : tab === "planning" ? (
@@ -1896,7 +1898,7 @@ const SANCTIONS_DE_BASE = [
   { motif: "Trop de temps sur le téléphone", emoji: "📱", points: 5 },
 ];
 
-function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRecompenses, menus, menuIdees, setMenuIdees, parentPin, setParentPin, sanctions, setSanctions, accent }) {
+function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRecompenses, menus, menuIdees, setMenuIdees, parentPin, setParentPin, sanctions, setSanctions, sanctionsPerso, setSanctionsPerso, accent }) {
   const [selectedId, setSelectedId] = useState(enfants[0]?.id || null);
   const [newPrenom, setNewPrenom] = useState("");
   const [tacheForm, setTacheForm] = useState({ titre: "", points: 5, rappelDate: "" });
@@ -1905,6 +1907,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   const [ajustePoche, setAjustePoche] = useState("");
   const [ajustePoints, setAjustePoints] = useState("");
   const [sanctionForm, setSanctionForm] = useState({ motif: "", points: 5 });
+  const [nouveauMotif, setNouveauMotif] = useState({ motif: "", points: 5 });
   const [jaugeForm, setJaugeForm] = useState({ label: "", cible: 50, recompense: 5 });
 
   // Verrou parent : déverrouillage valable pour la session en cours
@@ -1917,6 +1920,18 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   useEffect(() => {
     if (!selectedId && enfants.length) setSelectedId(enfants[0].id);
   }, [enfants]);
+
+  // Change d'enfant sélectionné → on vide les brouillons de formulaire
+  // (jauge, ajustements...) pour ne jamais laisser croire qu'une valeur
+  // saisie pour un enfant "colle" à un autre.
+  useEffect(() => {
+    setJaugeForm({ label: "", cible: 50, recompense: 5 });
+    setAjustePoche("");
+    setAjustePoints("");
+    setTacheForm({ titre: "", points: 5, rappelDate: "" });
+    setRecForm({ titre: "", coutPoints: 20 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   const enfant = enfants.find((e) => e.id === selectedId);
   const today = todayISO();
@@ -1937,6 +1952,8 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
     if (!newPrenom.trim()) return;
     const e = { id: uid(), prenom: newPrenom.trim(), soldePoche: 0, bonPoints: 0, jaugeLabel: "", jaugeCible: 0, jaugeRecompense: 0 };
     setEnfants((prev) => [...prev, e]);
+    // Les tâches de base sont créées automatiquement pour tout nouvel enfant
+    setTaches((prev) => [...prev, ...TACHES_DE_BASE.map((t) => ({ id: uid(), enfantId: e.id, titre: t.titre, points: 5, rappelDate: "", statut: "a_faire" }))]);
     setSelectedId(e.id);
     setNewPrenom("");
   };
@@ -1945,6 +1962,35 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
     setTaches((prev) => prev.filter((t) => t.enfantId !== id));
     setRecompenses((prev) => prev.filter((r) => r.enfantId !== id));
     if (selectedId === id) setSelectedId(null);
+  };
+
+  // Rattrape les enfants existants qui n'ont pas encore une tâche de base donnée
+  // (utile si on l'a ajoutée après coup, ou pour des enfants créés avant ce système).
+  const [messageRattrapage, setMessageRattrapage] = useState("");
+  const rattraperTachesDeBase = () => {
+    let compteur = 0;
+    setTaches((prev) => {
+      // Un modèle par titre déjà existant quelque part (base + tâches perso
+      // déjà créées avant ou après ce système) — on prend les points de la
+      // première occurrence trouvée pour ce titre.
+      const modeles = {};
+      TACHES_DE_BASE.forEach((t) => { modeles[t.titre] = 5; });
+      prev.forEach((t) => { if (!(t.titre in modeles)) modeles[t.titre] = t.points; });
+
+      const nouvelles = [];
+      enfants.forEach((enf) => {
+        Object.entries(modeles).forEach(([titre, points]) => {
+          const dejaLa = prev.some((x) => x.enfantId === enf.id && x.titre === titre) || nouvelles.some((x) => x.enfantId === enf.id && x.titre === titre);
+          if (!dejaLa) nouvelles.push({ id: uid(), enfantId: enf.id, titre, points, rappelDate: "", statut: "a_faire" });
+        });
+      });
+      compteur = nouvelles.length;
+      return nouvelles.length ? [...prev, ...nouvelles] : prev;
+    });
+    setTimeout(() => {
+      setMessageRattrapage(compteur > 0 ? `${compteur} tâche${compteur > 1 ? "s" : ""} ajoutée${compteur > 1 ? "s" : ""} !` : "Tout était déjà à jour, rien à ajouter.");
+      setTimeout(() => setMessageRattrapage(""), 4000);
+    }, 0);
   };
 
   // Accepte soit un objet (patch direct), soit une fonction (e) => patch,
@@ -1977,17 +2023,27 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
     setSanctions((prev) => prev.filter((x) => x.id !== s.id));
     updateEnfant((e) => ({ bonPoints: e.bonPoints + s.points }));
   };
+  // Motifs de sanction réutilisables ajoutés par la famille, en plus des motifs de base
+  const motifsSanction = [...SANCTIONS_DE_BASE, ...sanctionsPerso.map((s) => ({ motif: s.motif, emoji: s.emoji || "⚠️", points: s.points, perso: true, id: s.id }))];
+  const ajouterMotifSanctionPerso = () => {
+    if (!nouveauMotif.motif.trim() || !nouveauMotif.points) return;
+    setSanctionsPerso((prev) => [...prev, { id: uid(), motif: nouveauMotif.motif.trim(), points: Number(nouveauMotif.points), emoji: "⚠️" }]);
+    setNouveauMotif({ motif: "", points: 5 });
+  };
+  const supprimerMotifSanctionPerso = (id) => setSanctionsPerso((prev) => prev.filter((s) => s.id !== id));
 
   const tachesEnfant = taches.filter((t) => t.enfantId === selectedId);
   const addTache = (titre, points) => {
-    if (!(titre || tacheForm.titre).trim() || !enfant) return;
-    setTaches((prev) => [...prev, {
-      id: uid(), enfantId: selectedId,
-      titre: (titre || tacheForm.titre).trim(),
-      points: Number(points ?? tacheForm.points) || 0,
-      rappelDate: titre ? "" : tacheForm.rappelDate,
-      statut: "a_faire", // a_faire -> en_attente (côté enfant) -> valide (côté parent, donne les points)
-    }]);
+    const titreFinal = (titre || tacheForm.titre).trim();
+    if (!titreFinal || !enfants.length) return;
+    const pts = Number(points ?? tacheForm.points) || 0;
+    const rappel = titre ? "" : tacheForm.rappelDate;
+    setTaches((prev) => {
+      const nouvelles = enfants
+        .filter((enf) => !prev.some((t) => t.enfantId === enf.id && t.titre === titreFinal))
+        .map((enf) => ({ id: uid(), enfantId: enf.id, titre: titreFinal, points: pts, rappelDate: rappel, statut: "a_faire" }));
+      return nouvelles.length ? [...prev, ...nouvelles] : prev;
+    });
     if (!titre) setTacheForm({ titre: "", points: 5, rappelDate: "" });
   };
   const removeTache = (id) => setTaches((prev) => prev.filter((t) => t.id !== id));
@@ -1998,7 +2054,13 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   };
   // Actions parent uniquement : valider donne les points, refuser renvoie la tâche à faire.
   const validerTache = (t) => {
-    setTaches((prev) => prev.map((x) => (x.id === t.id ? { ...x, statut: "valide" } : x)));
+    const today = todayISO();
+    setTaches((prev) => prev.map((x) => (x.id === t.id ? {
+      ...x,
+      statut: "a_faire", // repasse dispo tout de suite : peut être refaite plusieurs fois dans la journée
+      derniereDate: today,
+      foisAujourdhui: x.derniereDate === today ? (x.foisAujourdhui || 0) + 1 : 1,
+    } : x)));
     updateEnfant((e) => ({ bonPoints: e.bonPoints + t.points }));
   };
   const refuserTache = (t) => {
@@ -2018,8 +2080,9 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
   };
 
   const activerJauge = () => {
-    if (!jaugeForm.label.trim() || !enfant) return;
-    updateEnfant({ jaugeLabel: jaugeForm.label.trim(), jaugeCible: Number(jaugeForm.cible) || 0, jaugeRecompense: Number(jaugeForm.recompense) || 0 });
+    if (!enfant || !Number(jaugeForm.cible) || !Number(jaugeForm.recompense)) return;
+    const label = jaugeForm.label.trim() || `Gagner ${formatEUR(Number(jaugeForm.recompense))}`;
+    updateEnfant({ jaugeLabel: label, jaugeCible: Number(jaugeForm.cible) || 0, jaugeRecompense: Number(jaugeForm.recompense) || 0 });
     setJaugeForm({ label: "", cible: 50, recompense: 5 });
   };
   const encaisserJauge = () => {
@@ -2159,16 +2222,32 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
               <SectionTitle accent={accent}>Comportement — retirer des points</SectionTitle>
               <p className="text-xs mb-2" style={{ color: INK_SOFT }}>Clique sur un motif pour retirer directement les points correspondants.</p>
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {SANCTIONS_DE_BASE.map((s) => (
-                  <button key={s.motif} onClick={() => appliquerSanction(s.motif, s.points)}
-                    className="text-xs px-2.5 py-1 rounded-full font-semibold border flex items-center gap-1"
-                    style={{ borderColor: "#E3B3AC", color: "#A33B3B", background: "#FBEAE8" }}>
-                    <span>{s.emoji}</span> {s.motif} (−{s.points})
-                  </button>
+                {motifsSanction.map((s) => (
+                  <span key={s.perso ? s.id : s.motif} className="inline-flex items-center">
+                    <button onClick={() => appliquerSanction(s.motif, s.points)}
+                      className="text-xs px-2.5 py-1 rounded-full font-semibold border flex items-center gap-1"
+                      style={{ borderColor: "#E3B3AC", color: "#A33B3B", background: "#FBEAE8", borderTopRightRadius: s.perso ? 0 : undefined, borderBottomRightRadius: s.perso ? 0 : undefined }}>
+                      <span>{s.emoji}</span> {s.motif} (−{s.points})
+                    </button>
+                    {s.perso && (
+                      <button onClick={() => supprimerMotifSanctionPerso(s.id)} className="text-xs px-1.5 py-1 rounded-full border-y border-r font-semibold" style={{ borderColor: "#E3B3AC", color: "#A33B3B", background: "#FBEAE8" }} title="Supprimer ce motif de la liste">
+                        <X size={11} />
+                      </button>
+                    )}
+                  </span>
                 ))}
               </div>
               <div className="flex flex-wrap gap-2 items-end pt-2 border-t mb-3" style={{ borderColor: LINE }}>
-                <Field label="Motif personnalisé">
+                <Field label="Ajouter un motif à la liste">
+                  <input className={inputCls} style={{ borderColor: LINE }} value={nouveauMotif.motif} onChange={(e) => setNouveauMotif({ ...nouveauMotif, motif: e.target.value })} placeholder="Ex. Ment délibérément" />
+                </Field>
+                <Field label="Points">
+                  <input type="number" className={inputCls + " w-20"} style={{ borderColor: LINE }} value={nouveauMotif.points} onChange={(e) => setNouveauMotif({ ...nouveauMotif, points: e.target.value })} />
+                </Field>
+                <button onClick={ajouterMotifSanctionPerso} className="h-8 px-3 rounded-md text-sm font-semibold border flex items-center gap-1" style={{ borderColor: LINE, color: "#A33B3B" }}><Plus size={15} />Ajouter à la liste</button>
+              </div>
+              <div className="flex flex-wrap gap-2 items-end pt-2 border-t mb-3" style={{ borderColor: LINE }}>
+                <Field label="Motif ponctuel (pas sauvegardé dans la liste)">
                   <input className={inputCls} style={{ borderColor: LINE }} value={sanctionForm.motif} onChange={(e) => setSanctionForm({ ...sanctionForm, motif: e.target.value })} placeholder="Autre motif..." />
                 </Field>
                 <Field label="Points à retirer">
@@ -2216,7 +2295,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
               </>
             ) : modeParent ? (
               <div className="flex flex-wrap gap-2 items-end">
-                <Field label="Objectif">
+                <Field label="Objectif (facultatif)">
                   <input className={inputCls} style={{ borderColor: LINE }} value={jaugeForm.label} onChange={(e) => setJaugeForm({ ...jaugeForm, label: e.target.value })} placeholder="Gagner 5€ pour un jouet" />
                 </Field>
                 <Field label="Points requis">
@@ -2235,29 +2314,30 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
           {/* Tâches ménagères */}
           <Card>
             <SectionTitle accent={accent}>Tâches ménagères &amp; rappels</SectionTitle>
+            <p className="text-xs mb-2" style={{ color: INK_SOFT }}>Une tâche validée redevient aussitôt disponible — elle peut être refaite plusieurs fois dans la journée, chaque validation redonne les points.</p>
             <div className="flex flex-col gap-1.5 mb-3">
               {tachesEnfant.map((t) => {
-                const enRetard = t.rappelDate && t.rappelDate <= today && t.statut !== "valide";
+                const enRetard = t.rappelDate && t.rappelDate <= today && t.statut === "a_faire";
+                const faitAujourdhui = t.derniereDate === today ? (t.foisAujourdhui || 0) : 0;
                 return (
                   <div key={t.id} className="flex items-center justify-between px-2 py-2 rounded-md text-sm flex-wrap gap-y-1"
-                    style={{ background: t.statut === "valide" ? accent.soft : t.statut === "en_attente" ? "#FCEFD9" : "transparent" }}>
+                    style={{ background: faitAujourdhui > 0 ? accent.soft : t.statut === "en_attente" ? "#FCEFD9" : "transparent" }}>
                     <label className="flex items-center gap-2.5 cursor-pointer">
                       <span className="flex items-center justify-center rounded-full text-xl w-10 h-10 shrink-0" style={{ background: "#fff" }}>
                         {emojiTache(t.titre)}
                       </span>
-                      {t.statut === "valide" ? (
-                        <CheckCircle2 size={18} style={{ color: accent.deep }} />
-                      ) : (
-                        <input type="checkbox" checked={t.statut === "en_attente"} onChange={() => marquerFait(t)} className="w-5 h-5" />
-                      )}
+                      <input type="checkbox" checked={t.statut === "en_attente"} onChange={() => marquerFait(t)} className="w-5 h-5" />
                       <span>
-                        <span className="block font-medium" style={{ textDecoration: t.statut === "valide" ? "line-through" : "none", color: t.statut === "valide" ? accent.deep : INK }}>{t.titre}</span>
+                        <span className="block font-medium" style={{ color: INK }}>{t.titre}</span>
                         <span className="text-xs flex items-center gap-1.5 flex-wrap" style={{ color: INK_SOFT }}>
                           <Star size={12} />{t.points} pts
                           {t.statut === "en_attente" && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F0C36B", color: "#5C4300" }}>en attente de validation</span>
                           )}
-                          {enRetard && t.statut === "a_faire" && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F3D6D6", color: "#A33B3B" }}>à faire aujourd'hui</span>}
+                          {faitAujourdhui > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex items-center gap-1" style={{ background: accent.main, color: "#fff" }}><CheckCircle2 size={10} />fait {faitAujourdhui}× aujourd'hui</span>
+                          )}
+                          {enRetard && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ background: "#F3D6D6", color: "#A33B3B" }}>à faire aujourd'hui</span>}
                         </span>
                       </span>
                     </label>
@@ -2277,6 +2357,12 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
             </div>
             {modeParent && (
               <>
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <button onClick={rattraperTachesDeBase} className="text-xs px-2.5 py-1.5 rounded-md border font-semibold" style={{ borderColor: LINE, color: accent.deep }}>
+                    ↻ Harmoniser toutes les tâches entre tous les enfants
+                  </button>
+                  {!!messageRattrapage && <span className="text-xs font-semibold" style={{ color: accent.deep }}>{messageRattrapage}</span>}
+                </div>
                 <p className="text-xs font-semibold mb-1.5" style={{ color: INK_SOFT }}>Tâches de base (clic pour ajouter, 5 pts) :</p>
                 <div className="flex flex-wrap gap-1.5 mb-3">
                   {TACHES_DE_BASE.map(({ titre, emoji }) => (
@@ -2288,7 +2374,7 @@ function EnfantsTab({ enfants, setEnfants, taches, setTaches, recompenses, setRe
                   ))}
                 </div>
                 <div className="flex flex-wrap gap-2 items-end pt-2 border-t" style={{ borderColor: LINE }}>
-                  <Field label="Tâche personnalisée">
+                  <Field label="Tâche personnalisée (ajoutée à tous les enfants)">
                     <input className={inputCls} style={{ borderColor: LINE }} value={tacheForm.titre} onChange={(e) => setTacheForm({ ...tacheForm, titre: e.target.value })} placeholder="Autre tâche..." />
                   </Field>
                   <Field label="Points">
